@@ -9,6 +9,8 @@ import {
   monthWiseFromPicklist,
   mergeBreakdowns,
   totalsFor,
+  fiscalMonthIndex,
+  ytdTotals,
 } from "../lib/dealHelpers.js";
 
 
@@ -170,15 +172,29 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
+
 // GET /api/crm-analysis/fy-comparison?fy1=2025-2026&fy2=2026-2027
 router.get("/crm-analysis/fy-comparison", async (req, res) => {
   const fy1 = req.query.fy1 || "2025-2026";
   const fy2 = req.query.fy2 || "2026-2027";
 
+  // Optional Type filter — comma-separated list, e.g. "Cash,Kind".
+  // When present, every card/table downstream is computed only from
+  // deals matching one of these Types. No param = no filter (all types).
+  const typesParam = req.query.types;
+  const selectedTypes = typesParam
+    ? typesParam.split(",").map((t) => t.trim()).filter(Boolean)
+    : null;
+
   try {
     const deals = await fetchAllRecords("Pipelines");
-    const closedDeals = deals.filter(isClosed);
-    const standardDeals = deals.filter(isStandardPipeline);
+    let closedDeals = deals.filter(isClosed);
+    let standardDeals = deals.filter(isStandardPipeline);
+
+    if (selectedTypes && selectedTypes.length > 0) {
+      closedDeals = closedDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+      standardDeals = standardDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
 
     const closedFY1 = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy1);
     const closedFY2 = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy2);
@@ -192,6 +208,63 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
         ? ((closedTotalsB.amount - closedTotalsA.amount) / closedTotalsA.amount) * 100
         : null;
 
+    // "Same period so far" comparison: whatever month it is right now,
+    // both fiscal years are only totalled from April up to that month.
+    // Rolls forward automatically — no code change needed month to month.
+    const now = new Date();
+    const cutoffIndex = fiscalMonthIndex(now);
+    const currentMonthLabel = now.toLocaleString("en-US", { month: "short" });
+
+    const closedFY1YTD = ytdTotals(closedFY1, "Closing_Date", cutoffIndex);
+    const closedFY2YTD = ytdTotals(closedFY2, "Closing_Date", cutoffIndex);
+    const ytdDiffAmount = closedFY2YTD.amount - closedFY1YTD.amount;
+    const ytdPctChange =
+      closedFY1YTD.amount > 0
+        ? (ytdDiffAmount / closedFY1YTD.amount) * 100
+        : closedFY2YTD.amount > 0
+        ? 100
+        : null;
+
+    // Month-by-month breakdown for the table that replaces "By Stage"
+    // and the Standard Pipeline card. FY2's months after the current
+    // month haven't happened yet, so their "difference" is meaningless —
+    // those rows get diffPct/diffAmount = null and the UI shows "—".
+    const monthWiseFY1 = monthWiseSummary(closedFY1, "Closing_Date");
+    const monthWiseFY2 = monthWiseSummary(closedFY2, "Closing_Date");
+    const byMonth = monthWiseFY1.map((m1, i) => {
+      const m2 = monthWiseFY2[i];
+      const isFuture = i > cutoffIndex;
+      let diffPct = null;
+      let diffAmount = null;
+      if (!isFuture) {
+        diffAmount = m2.amount - m1.amount;
+        diffPct =
+          m1.amount > 0 ? (diffAmount / m1.amount) * 100 : m2.amount > 0 ? 100 : null;
+      }
+      return {
+        name: m1.name,
+        amountA: m1.amount,
+        donorsA: m1.donors,
+        amountB: m2.amount,
+        donorsB: m2.donors,
+        diffPct,
+        diffAmount,
+      };
+    });
+
+    // Single-month comparison for the 4th card: just this month's number
+    // for both years, not cumulative. Reuses byMonth's row at the current
+    // fiscal index, so it moves to September automatically next month.
+    const currentMonthFY1 = monthWiseFY1[cutoffIndex];
+    const currentMonthFY2 = monthWiseFY2[cutoffIndex];
+    const monthDiffAmount = currentMonthFY2.amount - currentMonthFY1.amount;
+    const monthDiffPct =
+      currentMonthFY1.amount > 0
+        ? (monthDiffAmount / currentMonthFY1.amount) * 100
+        : currentMonthFY2.amount > 0
+        ? 100
+        : null;
+
     res.json({
       fy1,
       fy2,
@@ -200,10 +273,30 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
         [fy2]: closedTotalsB,
         pctChange,
       },
+      conversion: {
+        fy1Full: closedTotalsA,
+        fy1YTD: closedFY1YTD,
+        fy2YTD: closedFY2YTD,
+        currentMonthLabel,
+        ytdRangeLabel: `Apr\u2013${currentMonthLabel}`,
+        ytdDiffAmount,
+        ytdPctChange,
+        currentMonth: {
+          name: currentMonthFY1.name,
+          fy1Amount: currentMonthFY1.amount,
+          fy1Donors: currentMonthFY1.donors,
+          fy2Amount: currentMonthFY2.amount,
+          fy2Donors: currentMonthFY2.donors,
+          diffAmount: monthDiffAmount,
+          diffPct: monthDiffPct,
+        },
+      },
       standardPipeline: {
         [fy1]: totalsFor(standardFY1),
         [fy2]: totalsFor(standardFY2),
       },
+
+      byMonth,
 
       byType: mergeBreakdowns(
         groupSummary(closedFY1, "Type"),

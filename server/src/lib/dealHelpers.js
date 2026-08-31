@@ -114,7 +114,27 @@ export function monthWiseFromPicklist(deals, field = "Expected_Conversion_Month"
     donors: byMonth[m] ? byMonth[m].donorKeys.size : 0,
   }));
 }
+// Maps a JS Date's calendar month to its position in the April->March
+// fiscal year (April = 0 ... March = 11). Used to build "year-to-date"
+// comparisons that always mean "same stretch of months" regardless of
+// which two fiscal years are being compared.
+export function fiscalMonthIndex(date) {
+  return (date.getMonth() + 9) % 12; // getMonth(): Jan=0..Dec=11
+}
 
+// Totals for only the deals whose Closing_Date falls on or before the
+// given fiscal-month cutoff (inclusive). E.g. cutoffFiscalIndex for
+// August (fiscal index 4) includes April-August, excludes September+.
+export function ytdTotals(deals, dateField, cutoffFiscalIndex) {
+  const subset = deals.filter((d) => {
+    const raw = d[dateField];
+    if (!raw) return false;
+    const date = new Date(raw);
+    if (isNaN(date)) return false;
+    return fiscalMonthIndex(date) <= cutoffFiscalIndex;
+  });
+  return totalsFor(subset);
+}
 export function totalsFor(deals) {
   return {
     amount: deals.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0),

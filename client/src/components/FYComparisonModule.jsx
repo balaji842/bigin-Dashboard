@@ -7,25 +7,80 @@ const money = (n) =>
     maximumFractionDigits: 0,
   }).format(n || 0);
 
-function ComparisonKpi({ label, fy1, fy2, valueA, donorsA, valueB, donorsB, pctChange }) {
+const TYPE_OPTIONS = ["Cash", "Kind", "School Engagement"];
+
+// Multi-select pill filter. All types are selected by default; clicking
+// a pill toggles it, but at least one type must always stay selected.
+function TypeFilter({ selected, onToggle }) {
+  return (
+    <div className="flex flex-wrap gap-2 mb-4">
+      {TYPE_OPTIONS.map((t) => {
+        const active = selected.includes(t);
+        return (
+          <button
+            key={t}
+            type="button"
+            onClick={() => onToggle(t)}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              active
+                ? "bg-navy-900 text-white border-navy-900"
+                : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+            }`}
+          >
+            {t}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// One of the three cumulative Conversion cards. `diff` (only passed on
+// the FY 2026-2027 card) shows the ▼/▲ % plus the bold ₹ gap vs the
+// same-period card right before it.
+function ConversionCard({ title, sublabel, amount, donors, donorColorClass, diff }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-      <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-3">{label}</p>
-      <div className="grid grid-cols-2 gap-4">
+      <p className="text-xs uppercase tracking-wide text-slate-600 font-bold mb-1">{title}</p>
+      {sublabel && <p className="text-xs text-slate-500 font-medium mb-3">{sublabel}</p>}
+      <p className="font-display text-2xl font-bold text-navy-700">{money(amount)}</p>
+      <p className={`text-xs font-semibold mt-1 ${donorColorClass}`}>{donors} donors</p>
+      {diff && diff.pctChange != null && (
+        <p className={`text-xs font-semibold mt-3 ${diff.pctChange >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+          {diff.pctChange >= 0 ? "▲" : "▼"} {Math.abs(diff.pctChange).toFixed(1)}%
+          <span className="font-bold ml-1">
+            ({money(diff.amount)})
+          </span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// 4th card, shown full-width below the 3-card row: this calendar month
+// only (not cumulative) for both years, side by side. Automatically
+// shows September once the fiscal cutoff moves there.
+function MonthComparisonCard({ monthName, fy1, fy2, amountA, donorsA, amountB, donorsB, diffPct, diffAmount }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+      <p className="text-xs uppercase tracking-wide text-slate-600 font-bold mb-1">{monthName}</p>
+      <p className="text-sm text-slate-500 font-medium mb-5">Month vs month</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-5">
         <div>
-          <p className="text-xs text-slate-400 mb-1">FY {fy1}</p>
-          <p className="font-display text-xl font-bold text-navy-700">{money(valueA)}</p>
-          <p className="text-xs text-slate-400 mt-0.5">{donorsA} donors</p>
+          <p className="text-sm text-slate-500 font-semibold mb-1">FY {fy1}</p>
+          <p className="font-display text-2xl font-bold text-navy-700">{money(amountA)}</p>
+          <p className="text-sm text-blue-700 font-semibold mt-1">{donorsA} donors</p>
         </div>
         <div>
-          <p className="text-xs text-slate-400 mb-1">FY {fy2}</p>
-          <p className="font-display text-xl font-bold text-pink-600">{money(valueB)}</p>
-          <p className="text-xs text-slate-400 mt-0.5">{donorsB} donors</p>
+          <p className="text-sm text-slate-500 font-semibold mb-1">FY {fy2}</p>
+          <p className="font-display text-2xl font-bold text-pink-600">{money(amountB)}</p>
+          <p className="text-sm text-pink-700 font-semibold mt-1">{donorsB} donors</p>
         </div>
       </div>
-      {pctChange != null && (
-        <p className={`text-xs font-semibold mt-3 ${pctChange >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-          {pctChange >= 0 ? "▲" : "▼"} {Math.abs(pctChange).toFixed(1)}% vs FY {fy1}
+      {diffPct != null && (
+        <p className={`text-sm font-semibold mt-5 ${diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+          {diffPct >= 0 ? "▲" : "▼"} {Math.abs(diffPct).toFixed(1)}%
+          <span className="font-bold ml-1">({money(diffAmount)})</span>
         </p>
       )}
     </div>
@@ -75,17 +130,82 @@ function ComparisonTable({ title, rows, fy1, fy2 }) {
   );
 }
 
+// Month-by-month FY25-26 vs FY26-27 breakdown, replacing the old "By
+// Stage" table and the Standard Pipeline card. Months in FY2 that are
+// still in the future (haven't happened yet this fiscal year) show "—"
+// in the Difference column instead of a misleading -100%.
+function MonthlyTable({ rows, fy1, fy2 }) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+      <div className="bg-navy-900 text-white px-4 sm:px-5 py-3">
+        <p className="font-display font-semibold text-sm">By Month</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
+          <thead>
+            <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <th rowSpan={2} className="px-4 py-2 font-semibold text-left align-bottom">Month</th>
+              <th colSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy1}</th>
+              <th colSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy2}</th>
+              <th rowSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100 align-bottom">Difference</th>
+            </tr>
+            <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <th className="px-4 py-1.5 font-medium border-l border-slate-100">Amount</th>
+              <th className="px-4 py-1.5 font-medium">Donors</th>
+              <th className="px-4 py-1.5 font-medium border-l border-slate-100">Amount</th>
+              <th className="px-4 py-1.5 font-medium">Donors</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
+                <td className="px-4 py-2 text-navy-900 font-medium whitespace-nowrap">{r.name}</td>
+                <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{money(r.amountA)}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{r.donorsA}</td>
+                <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{money(r.amountB)}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{r.donorsB}</td>
+                <td className="px-4 py-2 text-right border-l border-slate-100 whitespace-nowrap">
+                  {r.diffPct == null ? (
+                    <span className="text-slate-300">—</span>
+                  ) : (
+                    <span className={`font-semibold ${r.diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                      {r.diffPct >= 0 ? "▲" : "▼"} {Math.abs(r.diffPct).toFixed(1)}%{" "}
+                      <span className="font-bold">({money(r.diffAmount)})</span>
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function FYComparisonModule() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedTypes, setSelectedTypes] = useState(TYPE_OPTIONS);
   const fy1 = "2025-2026";
   const fy2 = "2026-2027";
+
+  const toggleType = (t) => {
+    setSelectedTypes((prev) => {
+      const next = prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t];
+      return next.length === 0 ? prev : next; // never allow zero types selected
+    });
+  };
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/crm-analysis/fy-comparison?fy1=${fy1}&fy2=${fy2}`)
+    const params = new URLSearchParams({ fy1, fy2 });
+    if (selectedTypes.length < TYPE_OPTIONS.length) {
+      params.set("types", selectedTypes.join(","));
+    }
+    fetch(`/api/crm-analysis/fy-comparison?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -93,49 +213,85 @@ export default function FYComparisonModule() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedTypes]);
 
   if (loading && !data) {
     return (
-      <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
-        Loading FY comparison…
+      <div className="space-y-5 sm:space-y-6">
+        <TypeFilter selected={selectedTypes} onToggle={toggleType} />
+        <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
+          Loading FY comparison…
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
-        Couldn't load FY comparison: {error}
+      <div className="space-y-5 sm:space-y-6">
+        <TypeFilter selected={selectedTypes} onToggle={toggleType} />
+        <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
+          Couldn't load FY comparison: {error}
+        </div>
       </div>
     );
   }
 
+  const conv = data.conversion || {};
+  const monthLabel = conv.currentMonthLabel || "";
+
   return (
     <div className="space-y-5 sm:space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <ComparisonKpi
-          label="Closed Deals"
-          fy1={data.fy1}
-          fy2={data.fy2}
-          valueA={data.closed[data.fy1].amount}
-          donorsA={data.closed[data.fy1].donors}
-          valueB={data.closed[data.fy2].amount}
-          donorsB={data.closed[data.fy2].donors}
-          pctChange={data.closed.pctChange}
-        />
-        <ComparisonKpi
-          label="Standard Pipeline"
-          fy1={data.fy1}
-          fy2={data.fy2}
-          valueA={data.standardPipeline[data.fy1].amount}
-          donorsA={data.standardPipeline[data.fy1].donors}
-          valueB={data.standardPipeline[data.fy2].amount}
-          donorsB={data.standardPipeline[data.fy2].donors}
-        />
+      <TypeFilter selected={selectedTypes} onToggle={toggleType} />
+
+      <div>
+        <p className="font-display font-semibold text-sm text-navy-900 mb-3">Conversion</p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <ConversionCard
+            title={`FY ${data.fy1}`}
+            sublabel="Full year"
+            amount={conv.fy1Full?.amount}
+            donors={conv.fy1Full?.donors}
+            donorColorClass="text-blue-700"
+          />
+          <ConversionCard
+            title={`FY ${data.fy1}`}
+            sublabel={`Apr\u2013${monthLabel} (same period)`}
+            amount={conv.fy1YTD?.amount}
+            donors={conv.fy1YTD?.donors}
+            donorColorClass="text-emerald-700"
+          />
+          <ConversionCard
+            title={`FY ${data.fy2}`}
+            sublabel={`Apr\u2013${monthLabel}`}
+            amount={conv.fy2YTD?.amount}
+            donors={conv.fy2YTD?.donors}
+            donorColorClass="text-pink-700"
+            diff={{
+              pctChange: conv.ytdPctChange,
+              amount: conv.ytdDiffAmount,
+              vsLabel: `FY ${data.fy1} same period`,
+            }}
+          />
+        </div>
+
+        <div className="mt-4">
+          <MonthComparisonCard
+            monthName={conv.currentMonth?.name}
+            fy1={data.fy1}
+            fy2={data.fy2}
+            amountA={conv.currentMonth?.fy1Amount}
+            donorsA={conv.currentMonth?.fy1Donors}
+            amountB={conv.currentMonth?.fy2Amount}
+            donorsB={conv.currentMonth?.fy2Donors}
+            diffPct={conv.currentMonth?.diffPct}
+            diffAmount={conv.currentMonth?.diffAmount}
+          />
+        </div>
       </div>
 
-      <ComparisonTable title="By Stage" rows={data.byStage} fy1={data.fy1} fy2={data.fy2} />
+      <MonthlyTable rows={data.byMonth} fy1={data.fy1} fy2={data.fy2} />
 
       <div className="grid sm:grid-cols-2 gap-5">
         <ComparisonTable title="By Type (Cash/Kind/SE)" rows={data.byType} fy1={data.fy1} fy2={data.fy2} />

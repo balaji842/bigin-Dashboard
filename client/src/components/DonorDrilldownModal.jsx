@@ -29,7 +29,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, dono
                 <th className="px-4 py-2 font-semibold text-right">Amount</th>
                 <th className="px-4 py-2 font-semibold">Platform</th>
                 <th className="px-4 py-2 font-semibold">KAM</th>
-                <th className="px-4 py-2 font-semibold">Past FY Giving</th>
+                <th className="px-4 py-2 font-semibold">Spoc</th>
               </tr>
             </thead>
             <tbody>
@@ -39,20 +39,8 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, dono
                   <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{d.account}</td>
                   <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(d.amount)}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.platform}</td>
-                  <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
-                  <td className="px-4 py-2">
-                    {d.history.length === 0 ? (
-                      <span className="text-slate-300 text-xs">No prior giving on record</span>
-                    ) : (
-                      <div className="space-y-0.5">
-                        {d.history.map((h, j) => (
-                          <div key={j} className="text-xs text-slate-500 whitespace-nowrap">
-                            FY {h.fiscalYear}: {moneyCr(h.amount)}{h.month ? ` (${h.month})` : ""}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </td>
+                                    <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>
                 </tr>
               ))}
               {donors.length === 0 && (
