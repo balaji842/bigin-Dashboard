@@ -2,11 +2,14 @@ import { Router } from "express";
 import { fetchAllRecords } from "../zohoClient.js";
 import {
   pick,
+  pickNumber,
   isStandardPipeline,
   isClosed,
+  uniqueDonorKey,
   groupSummary,
   monthWiseSummary,
   monthWiseFromPicklist,
+  monthNameOf,
   mergeBreakdowns,
   totalsFor,
   fiscalMonthIndex,
@@ -15,7 +18,47 @@ import {
 } from "../lib/dealHelpers.js";
 
 
+// Parses a comma-separated query param into a trimmed array, or null if
+// the param wasn't supplied at all (meaning "no filter, include everything").
+function parseListParam(raw) {
+  return raw ? raw.split(",").map((t) => t.trim()).filter(Boolean) : null;
+}
+
+// Applies the Type/KAM/SPOC/Platform multi-select filters (any of which
+// may be null = not filtering on that field) to a list of deals.
+function applyFilters(deals, { types, kams, spocs, platforms }) {
+  let out = deals;
+  if (types && types.length > 0) out = out.filter((d) => types.includes(pick(d, "Type")));
+  if (kams && kams.length > 0) out = out.filter((d) => kams.includes(pick(d, "Pipeline_KAM")));
+  if (spocs && spocs.length > 0) out = out.filter((d) => spocs.includes(pick(d, "Spoc")));
+  if (platforms && platforms.length > 0) out = out.filter((d) => platforms.includes(pick(d, "Platform")));
+  return out;
+}
+
 const router = Router();
+
+// GET /api/crm-analysis/filter-options
+// Distinct Type/KAM/SPOC/Platform values across every deal (closed and
+// standard pipeline both), for populating the FY Comparison filter pills.
+// Kept as its own lightweight call so the filter lists stay complete even
+// while the person has other filters narrowed down elsewhere in the UI.
+router.get("/crm-analysis/filter-options", async (_req, res) => {
+  try {
+    const deals = await fetchAllRecords("Pipelines");
+    const distinct = (field) =>
+      [...new Set(deals.map((d) => pick(d, field)))].sort((a, b) => a.localeCompare(b));
+
+    res.json({
+      types: distinct("Type"),
+      kams: distinct("Pipeline_KAM"),
+      spocs: distinct("Spoc"),
+      platforms: distinct("Platform"),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
 
 // GET /api/crm-analysis/overview?fy=2025-2026
 router.get("/crm-analysis/overview", async (req, res) => {
@@ -173,29 +216,26 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
-
 // GET /api/crm-analysis/fy-comparison?fy1=2025-2026&fy2=2026-2027
 router.get("/crm-analysis/fy-comparison", async (req, res) => {
   const fy1 = req.query.fy1 || "2025-2026";
   const fy2 = req.query.fy2 || "2026-2027";
 
-  // Optional Type filter — comma-separated list, e.g. "Cash,Kind". When
-  // present, every card/table downstream is computed only from deals
-  // matching one of these Types. No param = no filter (all types).
-  const typesParam = req.query.types;
-  const selectedTypes = typesParam
-    ? typesParam.split(",").map((t) => t.trim()).filter(Boolean)
-    : null;
+  // Optional multi-select filters — comma-separated lists, e.g.
+  // "Cash,Kind" or "Prakash,Rajesh". Any filter left out (no query
+  // param) means "no restriction" on that field. Every card/table
+  // downstream is computed only from deals matching all supplied filters.
+  const filters = {
+    types: parseListParam(req.query.types),
+    kams: parseListParam(req.query.kams),
+    spocs: parseListParam(req.query.spocs),
+    platforms: parseListParam(req.query.platforms),
+  };
 
   try {
     const deals = await fetchAllRecords("Pipelines");
-    let closedDeals = deals.filter(isClosed);
-    let standardDeals = deals.filter(isStandardPipeline);
-
-    if (selectedTypes && selectedTypes.length > 0) {
-      closedDeals = closedDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
-      standardDeals = standardDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
-    }
+    const closedDeals = applyFilters(deals.filter(isClosed), filters);
+    const standardDeals = applyFilters(deals.filter(isStandardPipeline), filters);
 
     const closedFY1 = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy1);
     const closedFY2 = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy2);
@@ -347,18 +387,16 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
     return res.status(400).json({ error: "month query param is required" });
   }
 
-  const typesParam = req.query.types;
-  const selectedTypes = typesParam
-    ? typesParam.split(",").map((t) => t.trim()).filter(Boolean)
-    : null;
+  const filters = {
+    types: parseListParam(req.query.types),
+    kams: parseListParam(req.query.kams),
+    spocs: parseListParam(req.query.spocs),
+    platforms: parseListParam(req.query.platforms),
+  };
 
   try {
     const deals = await fetchAllRecords("Pipelines");
-    let closedDeals = deals.filter(isClosed);
-
-    if (selectedTypes && selectedTypes.length > 0) {
-      closedDeals = closedDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
-    }
+    const closedDeals = applyFilters(deals.filter(isClosed), filters);
 
     const breakdown = buildMonthDonorBreakdown(closedDeals, fy1, fy2, month);
 
@@ -374,4 +412,74 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
   }
 });
 
+// GET /api/crm-analysis/fy-comparison/month-donor-list?fy=2025-2026&month=August&types=&kams=&spocs=&platforms=
+//
+// Raw deal-level rows (one row per closed deal, not aggregated per
+// donor) for one fiscal year + month — powers the drilldown popup when
+// a Donors count cell is clicked in the By Month table.
+router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
+  const fy = req.query.fy;
+  const month = req.query.month;
+
+  if (!fy || !month) {
+    return res.status(400).json({ error: "fy and month query params are required" });
+  }
+
+  const filters = {
+    types: parseListParam(req.query.types),
+    kams: parseListParam(req.query.kams),
+    spocs: parseListParam(req.query.spocs),
+    platforms: parseListParam(req.query.platforms),
+  };
+
+  try {
+    const deals = await fetchAllRecords("Pipelines");
+    const closedDeals = applyFilters(deals.filter(isClosed), filters);
+
+    const dealsThisMonth = closedDeals.filter(
+      (d) => pick(d, "Fiscal_year", "") === fy && monthNameOf(d.Closing_Date) === month
+    );
+
+    // Group by donor so a donor with multiple gifts this month appears
+    // once (matching the unique-donor count shown in the By Month table)
+    // instead of once per deal.
+    const byDonor = {};
+    for (const d of dealsThisMonth) {
+      const key = uniqueDonorKey(d);
+      if (!key) continue;
+      if (!byDonor[key]) {
+        byDonor[key] = {
+          account: pick(d, "Account_Name"),
+          amount: 0,
+          platforms: new Set(),
+          kams: new Set(),
+          spocs: new Set(),
+        };
+      }
+      byDonor[key].amount += pickNumber(d, "Amount");
+      byDonor[key].platforms.add(pick(d, "Platform"));
+      byDonor[key].kams.add(pick(d, "Pipeline_KAM"));
+      byDonor[key].spocs.add(pick(d, "Spoc"));
+    }
+
+    const rows = Object.values(byDonor)
+      .map((r) => ({
+        account: r.account,
+        amount: r.amount,
+        platform: [...r.platforms].join(" / "),
+        kam: [...r.kams].join(" / "),
+        spoc: [...r.spocs].join(" / "),
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    res.json({
+      fy,
+      month,
+      donors: rows,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
 export default router;

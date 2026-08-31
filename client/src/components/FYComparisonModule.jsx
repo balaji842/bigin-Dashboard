@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import MonthDonorBreakdownModal from "./MonthDonorBreakdownModal.jsx";
+import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 
 const money = (n) =>
   new Intl.NumberFormat("en-IN", {
@@ -8,30 +9,120 @@ const money = (n) =>
     maximumFractionDigits: 0,
   }).format(n || 0);
 
-const TYPE_OPTIONS = ["Cash", "Kind", "School Engagement"];
-
-// Multi-select pill filter. All types are selected by default; clicking
-// a pill toggles it, but at least one type must always stay selected.
-function TypeFilter({ selected, onToggle }) {
+// Generic multi-select pill filter, reused for Type, KAM, SPOC, and
+// Platform. `selected: null` means "everything" (no restriction, no
+// pills highlighted as excluded); once the person deselects at least
+// one option, `selected` becomes the explicit array of what's still on.
+function FilterGroup({ label, options, selected, onToggle }) {
+  if (!options || options.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-2 mb-4">
-      {TYPE_OPTIONS.map((t) => {
-        const active = selected.includes(t);
-        return (
-          <button
-            key={t}
-            type="button"
-            onClick={() => onToggle(t)}
-            className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
-              active
-                ? "bg-navy-900 text-white border-navy-900"
-                : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
-            }`}
-          >
-            {t}
-          </button>
-        );
-      })}
+    <div className="mb-3">
+      <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">{label}</p>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => {
+          const active = selected == null || selected.includes(opt);
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => onToggle(opt)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                active
+                  ? "bg-navy-900 text-white border-navy-900"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Dropdown multi-select with checkboxes — used for KAM, SPOC, and
+// Platform, which can have many more options than Type. `selected: null`
+// means "everything" selected. Closes when clicking outside of it.
+function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  if (!options || options.length === 0) return null;
+
+  const allSelected = selected == null;
+  const count = allSelected ? options.length : selected.length;
+  const summary = allSelected ? "All" : `${count} of ${options.length}`;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-2 text-sm px-3.5 py-2 rounded-lg border transition-colors ${
+          open
+            ? "border-navy-900 bg-navy-900 text-white"
+            : allSelected
+            ? "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+            : "border-navy-900 bg-navy-100 text-navy-900"
+        }`}
+      >
+        <span className="font-semibold">{label}</span>
+        <span className={`text-xs ${open ? "text-white/70" : "text-slate-400"}`}>{summary}</span>
+        <svg
+          className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""} ${open ? "text-white/70" : "text-slate-400"}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute z-30 mt-2 w-64 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between px-3.5 py-2 border-b border-slate-100 bg-slate-50">
+            <p className="text-xs font-semibold text-slate-500">{label}</p>
+            {!allSelected && (
+              <button
+                type="button"
+                onClick={onSelectAll}
+                className="text-xs font-semibold text-navy-700 hover:underline"
+              >
+                Select all
+              </button>
+            )}
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1">
+            {options.map((opt) => {
+              const checked = allSelected || selected.includes(opt);
+              return (
+                <label
+                  key={opt}
+                  className="flex items-center gap-2.5 px-3.5 py-2 text-sm text-navy-900 hover:bg-slate-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggle(opt)}
+                    className="w-4 h-4 rounded border-slate-300 accent-navy-900 cursor-pointer"
+                  />
+                  <span className="truncate">{opt}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -137,8 +228,10 @@ function ComparisonTable({ title, rows, fy1, fy2 }) {
 // in the Difference column instead of a misleading -100%.
 // Difference cells are clickable (when diffPct isn't null — i.e. the
 // month has actually happened in both years) and open the donor-level
-// breakdown modal for that month via onMonthClick.
-function MonthlyTable({ rows, fy1, fy2, onMonthClick }) {
+// 4-bucket breakdown modal for that month via onDiffClick. Donors count
+// cells are always clickable (when > 0) and open a simple donor list for
+// that one FY+month via onDonorCountClick.
+function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
       <div className="bg-navy-900 text-white px-4 sm:px-5 py-3">
@@ -165,16 +258,40 @@ function MonthlyTable({ rows, fy1, fy2, onMonthClick }) {
               <tr key={r.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                 <td className="px-4 py-2 text-navy-900 font-medium whitespace-nowrap">{r.name}</td>
                 <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{money(r.amountA)}</td>
-                <td className="px-4 py-2 text-right text-slate-600">{r.donorsA}</td>
+                <td className="px-4 py-2 text-right border-l-0">
+                  {r.donorsA > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onDonorCountClick(fy1, r.name)}
+                      className="text-navy-700 font-semibold hover:underline cursor-pointer w-full text-right"
+                    >
+                      {r.donorsA}
+                    </button>
+                  ) : (
+                    <span className="text-slate-400">{r.donorsA}</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{money(r.amountB)}</td>
-                <td className="px-4 py-2 text-right text-slate-600">{r.donorsB}</td>
+                <td className="px-4 py-2 text-right">
+                  {r.donorsB > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onDonorCountClick(fy2, r.name)}
+                      className="text-navy-700 font-semibold hover:underline cursor-pointer w-full text-right"
+                    >
+                      {r.donorsB}
+                    </button>
+                  ) : (
+                    <span className="text-slate-400">{r.donorsB}</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right border-l border-slate-100 whitespace-nowrap">
                   {r.diffPct == null ? (
                     <span className="text-slate-300">—</span>
                   ) : (
                     <button
                       type="button"
-                      onClick={() => onMonthClick(r.name)}
+                      onClick={() => onDiffClick(r.name)}
                       className={`font-semibold hover:underline cursor-pointer ${r.diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}
                     >
                       {r.diffPct >= 0 ? "▲" : "▼"} {Math.abs(r.diffPct).toFixed(1)}%{" "}
@@ -195,9 +312,42 @@ export default function FYComparisonModule() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedTypes, setSelectedTypes] = useState(TYPE_OPTIONS);
   const fy1 = "2025-2026";
   const fy2 = "2026-2027";
+
+  // Filter option lists (distinct values across all deals), fetched once.
+  const [filterOptions, setFilterOptions] = useState({ types: [], kams: [], spocs: [], platforms: [] });
+
+  // Each filter is either null ("everything") or an explicit array of
+  // the values still selected. Toggling down to zero is blocked; toggling
+  // back up to the full list collapses back to null.
+  const [selectedTypes, setSelectedTypes] = useState(null);
+  const [selectedKams, setSelectedKams] = useState(null);
+  const [selectedSpocs, setSelectedSpocs] = useState(null);
+  const [selectedPlatforms, setSelectedPlatforms] = useState(null);
+
+  const toggleIn = (setter, allOptions) => (value) => {
+    setter((current) => {
+      const base = current == null ? allOptions : current;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      if (next.length === 0) return current; // never allow zero selected
+      if (next.length === allOptions.length) return null; // back to "everything"
+      return next;
+    });
+  };
+  const toggleType = toggleIn(setSelectedTypes, filterOptions.types);
+  const toggleKam = toggleIn(setSelectedKams, filterOptions.kams);
+  const toggleSpoc = toggleIn(setSelectedSpocs, filterOptions.spocs);
+  const togglePlatform = toggleIn(setSelectedPlatforms, filterOptions.platforms);
+
+  const buildFilterParams = () => {
+    const params = new URLSearchParams({ fy1, fy2 });
+    if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    if (selectedKams != null) params.set("kams", selectedKams.join(","));
+    if (selectedSpocs != null) params.set("spocs", selectedSpocs.join(","));
+    if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
+    return params;
+  };
 
   // Donor breakdown modal for a clicked month's Difference cell.
   const [modalMonth, setModalMonth] = useState(null);
@@ -211,10 +361,8 @@ export default function FYComparisonModule() {
     setModalError(null);
     setModalLoading(true);
 
-    const params = new URLSearchParams({ fy1, fy2, month: monthName });
-    if (selectedTypes.length < TYPE_OPTIONS.length) {
-      params.set("types", selectedTypes.join(","));
-    }
+    const params = buildFilterParams();
+    params.set("month", monthName);
     fetch(`/api/crm-analysis/fy-comparison/month-donors?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -225,20 +373,46 @@ export default function FYComparisonModule() {
       .finally(() => setModalLoading(false));
   };
 
-  const toggleType = (t) => {
-    setSelectedTypes((prev) => {
-      const next = prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t];
-      return next.length === 0 ? prev : next; // never allow zero types selected
-    });
+  // Donor list modal for a clicked Donors count cell (one FY + month).
+  const [donorListOpen, setDonorListOpen] = useState(false);
+  const [donorListFy, setDonorListFy] = useState(null);
+  const [donorListMonth, setDonorListMonth] = useState(null);
+  const [donorListRows, setDonorListRows] = useState([]);
+
+  const openDonorListModal = (fy, monthName) => {
+    setDonorListFy(fy);
+    setDonorListMonth(monthName);
+    setDonorListRows([]);
+    setDonorListOpen(true);
+
+    const params = buildFilterParams();
+    params.set("fy", fy);
+    params.set("month", monthName);
+    fetch(`/api/crm-analysis/fy-comparison/month-donor-list?${params.toString()}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((json) => setDonorListRows(json.donors || []))
+      .catch(() => setDonorListRows([]));
   };
+
+  useEffect(() => {
+    fetch(`/api/crm-analysis/filter-options`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(setFilterOptions)
+      .catch(() => {
+        /* Filter pills just won't render if this fails — non-fatal. */
+      });
+  }, []);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams({ fy1, fy2 });
-    if (selectedTypes.length < TYPE_OPTIONS.length) {
-      params.set("types", selectedTypes.join(","));
-    }
+    const params = buildFilterParams();
     fetch(`/api/crm-analysis/fy-comparison?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -247,12 +421,41 @@ export default function FYComparisonModule() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [selectedTypes]);
+  }, [selectedTypes, selectedKams, selectedSpocs, selectedPlatforms]);
+
+  const filterBar = (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+      <FilterGroup label="Type" options={filterOptions.types} selected={selectedTypes} onToggle={toggleType} />
+      <div className="flex flex-wrap gap-2.5">
+        <MultiSelectDropdown
+          label="KAM"
+          options={filterOptions.kams}
+          selected={selectedKams}
+          onToggle={toggleKam}
+          onSelectAll={() => setSelectedKams(null)}
+        />
+        <MultiSelectDropdown
+          label="SPOC"
+          options={filterOptions.spocs}
+          selected={selectedSpocs}
+          onToggle={toggleSpoc}
+          onSelectAll={() => setSelectedSpocs(null)}
+        />
+        <MultiSelectDropdown
+          label="Platform"
+          options={filterOptions.platforms}
+          selected={selectedPlatforms}
+          onToggle={togglePlatform}
+          onSelectAll={() => setSelectedPlatforms(null)}
+        />
+      </div>
+    </div>
+  );
 
   if (loading && !data) {
     return (
       <div className="space-y-5 sm:space-y-6">
-        <TypeFilter selected={selectedTypes} onToggle={toggleType} />
+        {filterBar}
         <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
           Loading FY comparison…
         </div>
@@ -263,7 +466,7 @@ export default function FYComparisonModule() {
   if (error) {
     return (
       <div className="space-y-5 sm:space-y-6">
-        <TypeFilter selected={selectedTypes} onToggle={toggleType} />
+        {filterBar}
         <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
           Couldn't load FY comparison: {error}
         </div>
@@ -276,7 +479,7 @@ export default function FYComparisonModule() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      <TypeFilter selected={selectedTypes} onToggle={toggleType} />
+      {filterBar}
 
       <div>
         <p className="font-display font-semibold text-sm text-navy-900 mb-3">Conversion</p>
@@ -325,7 +528,13 @@ export default function FYComparisonModule() {
         </div>
       </div>
 
-      <MonthlyTable rows={data.byMonth} fy1={data.fy1} fy2={data.fy2} onMonthClick={openMonthModal} />
+      <MonthlyTable
+        rows={data.byMonth}
+        fy1={data.fy1}
+        fy2={data.fy2}
+        onDiffClick={openMonthModal}
+        onDonorCountClick={openDonorListModal}
+      />
 
       <div className="grid sm:grid-cols-2 gap-5">
         <ComparisonTable title="By Type (Cash/Kind/SE)" rows={data.byType} fy1={data.fy1} fy2={data.fy2} />
@@ -343,6 +552,14 @@ export default function FYComparisonModule() {
         loading={modalLoading}
         error={modalError}
         data={modalData}
+      />
+
+      <DonorDrilldownModal
+        open={donorListOpen}
+        onClose={() => setDonorListOpen(false)}
+        monthName={donorListMonth}
+        fy={donorListFy}
+        donors={donorListRows}
       />
     </div>
   );

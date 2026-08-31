@@ -29,7 +29,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, dono
                 <th className="px-4 py-2 font-semibold text-right">Amount</th>
                 <th className="px-4 py-2 font-semibold">Platform</th>
                 <th className="px-4 py-2 font-semibold">KAM</th>
-                <th className="px-4 py-2 font-semibold">Spoc</th>
+                <th className="px-4 py-2 font-semibold">SPOC</th>
               </tr>
             </thead>
             <tbody>
@@ -39,7 +39,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, dono
                   <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{d.account}</td>
                   <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(d.amount)}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.platform}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>
                 </tr>
               ))}
