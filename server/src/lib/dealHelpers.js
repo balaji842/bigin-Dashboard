@@ -114,6 +114,7 @@ export function monthWiseFromPicklist(deals, field = "Expected_Conversion_Month"
     donors: byMonth[m] ? byMonth[m].donorKeys.size : 0,
   }));
 }
+
 // Maps a JS Date's calendar month to its position in the April->March
 // fiscal year (April = 0 ... March = 11). Used to build "year-to-date"
 // comparisons that always mean "same stretch of months" regardless of
@@ -125,6 +126,8 @@ export function fiscalMonthIndex(date) {
 // Totals for only the deals whose Closing_Date falls on or before the
 // given fiscal-month cutoff (inclusive). E.g. cutoffFiscalIndex for
 // August (fiscal index 4) includes April-August, excludes September+.
+// This is what makes a mid-year FY-to-FY comparison fair: both sides
+// only count the same stretch of months.
 export function ytdTotals(deals, dateField, cutoffFiscalIndex) {
   const subset = deals.filter((d) => {
     const raw = d[dateField];
@@ -135,6 +138,154 @@ export function ytdTotals(deals, dateField, cutoffFiscalIndex) {
   });
   return totalsFor(subset);
 }
+
+export function monthNameOf(closingDate) {
+  if (!closingDate) return null;
+  const d = new Date(closingDate);
+  return isNaN(d) ? null : d.toLocaleString("en-US", { month: "long" });
+}
+
+// Builds the 4-way donor breakdown (Matching / Missing / New / Past) for
+// one calendar month, comparing fy1 vs fy2. See route comment for the
+// exact definition of each bucket. `deals` should already be filtered to
+// isClosed (and any Type filter) before calling this.
+export function buildMonthDonorBreakdown(deals, fy1, fy2, month) {
+  const byDonor = {}; // donorKey -> { account, byFY: { [fiscalYear]: [entry, ...] } }
+
+  for (const d of deals) {
+    const donorKey = uniqueDonorKey(d);
+    if (!donorKey) continue;
+    const fy = pick(d, "Fiscal_year", "Unspecified");
+    if (!byDonor[donorKey]) byDonor[donorKey] = { account: pick(d, "Account_Name"), byFY: {} };
+    if (!byDonor[donorKey].byFY[fy]) byDonor[donorKey].byFY[fy] = [];
+    byDonor[donorKey].byFY[fy].push({
+      amount: pickNumber(d, "Amount"),
+      type: pick(d, "Type"),
+      month: monthNameOf(d.Closing_Date),
+      kam: pick(d, "Pipeline_KAM"),
+      platform: pick(d, "Platform"),
+      spoc: pick(d, "Spoc"),
+    });
+  }
+
+  function aggregate(entries) {
+    if (!entries || entries.length === 0) return null;
+    const amount = entries.reduce((s, e) => s + e.amount, 0);
+    const type = [...new Set(entries.map((e) => e.type))].join(" / ");
+    const monthLabel = [...new Set(entries.map((e) => e.month).filter(Boolean))].join(", ");
+    const last = entries[entries.length - 1];
+    return { amount, type, month: monthLabel, kam: last.kam, platform: last.platform, spoc: last.spoc };
+  }
+
+  function priorYearsLabel(byFY) {
+    return Object.entries(byFY)
+      .filter(([fy]) => fy !== fy1 && fy !== fy2)
+      .map(([fy, entries]) => {
+        const amt = entries.reduce((s, e) => s + e.amount, 0);
+        const type = [...new Set(entries.map((e) => e.type))].join("/");
+        return `FY ${fy}: \u20b9${amt.toLocaleString("en-IN")} (${type})`;
+      })
+      .join("; ");
+  }
+
+  const matching = [];
+  const missing = [];
+  const newDonors = [];
+  const past = [];
+
+  for (const info of Object.values(byDonor)) {
+    const fy1All = info.byFY[fy1] || [];
+    const fy2All = info.byFY[fy2] || [];
+    const fy1Month = fy1All.filter((e) => e.month === month);
+    const fy2Month = fy2All.filter((e) => e.month === month);
+
+    const otherYearEntries = Object.entries(info.byFY)
+      .filter(([fy]) => fy !== fy1 && fy !== fy2)
+      .flatMap(([, entries]) => entries);
+
+    const inFY1Month = fy1Month.length > 0;
+    const inFY2Month = fy2Month.length > 0;
+    const inFY1Any = fy1All.length > 0;
+    const inFY2Any = fy2All.length > 0;
+    const inOther = otherYearEntries.length > 0;
+
+    if (inFY1Month && inFY2Month) {
+      const a1 = aggregate(fy1Month);
+      const a2 = aggregate(fy2Month);
+      const diffAmount = a2.amount - a1.amount;
+      const diffPct = a1.amount > 0 ? (diffAmount / a1.amount) * 100 : a2.amount > 0 ? 100 : null;
+      matching.push({
+        account: info.account,
+        fy1Amount: a1.amount,
+        fy1Type: a1.type,
+        fy2Amount: a2.amount,
+        fy2Type: a2.type,
+        diffAmount,
+        diffPct,
+        kam: a2.kam,
+        spoc: a2.spoc,
+      });
+    } else if (inFY1Month && !inFY2Any) {
+      const a1 = aggregate(fy1Month);
+      missing.push({
+        account: info.account,
+        fy1Amount: a1.amount,
+        fy1Type: a1.type,
+        kam: a1.kam,
+        spoc: a1.spoc,
+      });
+    } else if (inFY2Month) {
+      const a2 = aggregate(fy2Month);
+      if (inFY1Any) {
+        const a1 = aggregate(fy1All);
+        newDonors.push({
+          account: info.account,
+          fy1Amount: a1.amount,
+          fy1Type: a1.type,
+          fy1Month: a1.month,
+          fy2Amount: a2.amount,
+          fy2Type: a2.type,
+          platform: a2.platform,
+          kam: a2.kam,
+          spoc: a2.spoc,
+        });
+      } else if (inOther) {
+        past.push({
+          account: info.account,
+          priorSummary: priorYearsLabel(info.byFY),
+          fy2Amount: a2.amount,
+          fy2Type: a2.type,
+          platform: a2.platform,
+          kam: a2.kam,
+          spoc: a2.spoc,
+        });
+      } else {
+        newDonors.push({
+          account: info.account,
+          fy1Amount: null,
+          fy1Type: null,
+          fy1Month: null,
+          fy2Amount: a2.amount,
+          fy2Type: a2.type,
+          platform: a2.platform,
+          kam: a2.kam,
+          spoc: a2.spoc,
+        });
+      }
+    }
+    // else: no activity in this month for either year — irrelevant to this view.
+  }
+
+  const sumBy = (arr, key) => arr.reduce((s, r) => s + (r[key] || 0), 0);
+
+  return {
+    matching: { rows: matching, donorCount: matching.length, totalAmount: sumBy(matching, "fy2Amount") },
+    missing: { rows: missing, donorCount: missing.length, totalAmount: sumBy(missing, "fy1Amount") },
+    newDonors: { rows: newDonors, donorCount: newDonors.length, totalAmount: sumBy(newDonors, "fy2Amount") },
+    past: { rows: past, donorCount: past.length, totalAmount: sumBy(past, "fy2Amount") },
+  };
+}
+
 export function totalsFor(deals) {
   return {
     amount: deals.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0),

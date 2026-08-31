@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import MonthDonorBreakdownModal from "./MonthDonorBreakdownModal.jsx";
 
 const money = (n) =>
   new Intl.NumberFormat("en-IN", {
@@ -134,7 +135,10 @@ function ComparisonTable({ title, rows, fy1, fy2 }) {
 // Stage" table and the Standard Pipeline card. Months in FY2 that are
 // still in the future (haven't happened yet this fiscal year) show "—"
 // in the Difference column instead of a misleading -100%.
-function MonthlyTable({ rows, fy1, fy2 }) {
+// Difference cells are clickable (when diffPct isn't null — i.e. the
+// month has actually happened in both years) and open the donor-level
+// breakdown modal for that month via onMonthClick.
+function MonthlyTable({ rows, fy1, fy2, onMonthClick }) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
       <div className="bg-navy-900 text-white px-4 sm:px-5 py-3">
@@ -168,10 +172,14 @@ function MonthlyTable({ rows, fy1, fy2 }) {
                   {r.diffPct == null ? (
                     <span className="text-slate-300">—</span>
                   ) : (
-                    <span className={`font-semibold ${r.diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                    <button
+                      type="button"
+                      onClick={() => onMonthClick(r.name)}
+                      className={`font-semibold hover:underline cursor-pointer ${r.diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}
+                    >
                       {r.diffPct >= 0 ? "▲" : "▼"} {Math.abs(r.diffPct).toFixed(1)}%{" "}
                       <span className="font-bold">({money(r.diffAmount)})</span>
-                    </span>
+                    </button>
                   )}
                 </td>
               </tr>
@@ -190,6 +198,32 @@ export default function FYComparisonModule() {
   const [selectedTypes, setSelectedTypes] = useState(TYPE_OPTIONS);
   const fy1 = "2025-2026";
   const fy2 = "2026-2027";
+
+  // Donor breakdown modal for a clicked month's Difference cell.
+  const [modalMonth, setModalMonth] = useState(null);
+  const [modalData, setModalData] = useState(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState(null);
+
+  const openMonthModal = (monthName) => {
+    setModalMonth(monthName);
+    setModalData(null);
+    setModalError(null);
+    setModalLoading(true);
+
+    const params = new URLSearchParams({ fy1, fy2, month: monthName });
+    if (selectedTypes.length < TYPE_OPTIONS.length) {
+      params.set("types", selectedTypes.join(","));
+    }
+    fetch(`/api/crm-analysis/fy-comparison/month-donors?${params.toString()}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(setModalData)
+      .catch((e) => setModalError(e.message))
+      .finally(() => setModalLoading(false));
+  };
 
   const toggleType = (t) => {
     setSelectedTypes((prev) => {
@@ -291,7 +325,7 @@ export default function FYComparisonModule() {
         </div>
       </div>
 
-      <MonthlyTable rows={data.byMonth} fy1={data.fy1} fy2={data.fy2} />
+      <MonthlyTable rows={data.byMonth} fy1={data.fy1} fy2={data.fy2} onMonthClick={openMonthModal} />
 
       <div className="grid sm:grid-cols-2 gap-5">
         <ComparisonTable title="By Type (Cash/Kind/SE)" rows={data.byType} fy1={data.fy1} fy2={data.fy2} />
@@ -299,6 +333,17 @@ export default function FYComparisonModule() {
         <ComparisonTable title="By KAM" rows={data.byKAM} fy1={data.fy1} fy2={data.fy2} />
         <ComparisonTable title="By Platform" rows={data.byPlatform} fy1={data.fy1} fy2={data.fy2} />
       </div>
+
+      <MonthDonorBreakdownModal
+        open={modalMonth != null}
+        onClose={() => setModalMonth(null)}
+        monthName={modalMonth}
+        fy1={data.fy1}
+        fy2={data.fy2}
+        loading={modalLoading}
+        error={modalError}
+        data={modalData}
+      />
     </div>
   );
 }

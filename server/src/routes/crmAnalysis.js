@@ -11,6 +11,7 @@ import {
   totalsFor,
   fiscalMonthIndex,
   ytdTotals,
+  buildMonthDonorBreakdown,
 } from "../lib/dealHelpers.js";
 
 
@@ -178,9 +179,9 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
   const fy1 = req.query.fy1 || "2025-2026";
   const fy2 = req.query.fy2 || "2026-2027";
 
-  // Optional Type filter — comma-separated list, e.g. "Cash,Kind".
-  // When present, every card/table downstream is computed only from
-  // deals matching one of these Types. No param = no filter (all types).
+  // Optional Type filter — comma-separated list, e.g. "Cash,Kind". When
+  // present, every card/table downstream is computed only from deals
+  // matching one of these Types. No param = no filter (all types).
   const typesParam = req.query.types;
   const selectedTypes = typesParam
     ? typesParam.split(",").map((t) => t.trim()).filter(Boolean)
@@ -210,7 +211,8 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
 
     // "Same period so far" comparison: whatever month it is right now,
     // both fiscal years are only totalled from April up to that month.
-    // Rolls forward automatically — no code change needed month to month.
+    // This rolls forward automatically — no code change needed when the
+    // calendar moves from August to September.
     const now = new Date();
     const cutoffIndex = fiscalMonthIndex(now);
     const currentMonthLabel = now.toLocaleString("en-US", { month: "short" });
@@ -225,10 +227,10 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
         ? 100
         : null;
 
-    // Month-by-month breakdown for the table that replaces "By Stage"
-    // and the Standard Pipeline card. FY2's months after the current
-    // month haven't happened yet, so their "difference" is meaningless —
-    // those rows get diffPct/diffAmount = null and the UI shows "—".
+    // Month-by-month breakdown for the "By Month" table. FY2's months
+    // after the current month haven't happened yet, so their difference
+    // is meaningless — those rows get diffPct/diffAmount = null and the
+    // UI shows "—" (and isn't clickable) instead of a misleading -100%.
     const monthWiseFY1 = monthWiseSummary(closedFY1, "Closing_Date");
     const monthWiseFY2 = monthWiseSummary(closedFY2, "Closing_Date");
     const byMonth = monthWiseFY1.map((m1, i) => {
@@ -319,6 +321,52 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
         groupSummary(closedFY2, "Stage")
       ),
 
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/crm-analysis/fy-comparison/month-donors?fy1=2025-2026&fy2=2026-2027&month=August&types=Cash,Kind
+//
+// Donor-level drilldown for one month's Difference cell in the By Month
+// table. Buckets every donor active around that month into 4 groups:
+//   - matching: gave in this month in both fy1 and fy2
+//   - missing:  gave in this month in fy1, gave nothing anywhere in fy2 (to date)
+//   - new:      gave in this month in fy2, and either gave in fy1 in a
+//               different month (timing shift) or has no prior history at all
+//   - past:     gave in this month in fy2, nothing in fy1 at all, but did
+//               give in some earlier fiscal year (a lapsed donor returning)
+router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
+  const fy1 = req.query.fy1 || "2025-2026";
+  const fy2 = req.query.fy2 || "2026-2027";
+  const month = req.query.month;
+
+  if (!month) {
+    return res.status(400).json({ error: "month query param is required" });
+  }
+
+  const typesParam = req.query.types;
+  const selectedTypes = typesParam
+    ? typesParam.split(",").map((t) => t.trim()).filter(Boolean)
+    : null;
+
+  try {
+    const deals = await fetchAllRecords("Pipelines");
+    let closedDeals = deals.filter(isClosed);
+
+    if (selectedTypes && selectedTypes.length > 0) {
+      closedDeals = closedDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
+
+    const breakdown = buildMonthDonorBreakdown(closedDeals, fy1, fy2, month);
+
+    res.json({
+      fy1,
+      fy2,
+      month,
+      ...breakdown,
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
