@@ -48,8 +48,8 @@ router.get("/crm-analysis/filter-options", async (_req, res) => {
     const distinct = (field) =>
       [...new Set(deals.map((d) => pick(d, field)))].sort((a, b) => a.localeCompare(b));
 
-    res.json({
-      types: distinct("Type"),
+        res.json({
+      types: distinct("Type").filter((v) => v !== "Unspecified"),
       kams: distinct("Pipeline_KAM"),
       spocs: distinct("Spoc"),
       platforms: distinct("Platform"),

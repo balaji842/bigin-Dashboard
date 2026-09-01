@@ -1,11 +1,11 @@
-import { IconChartBars, IconDot, IconX } from "./icons.jsx";
+import { IconChartBars, IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar } from "./icons.jsx";
 
 const NAV_ITEMS = [
   //{ id: "bigin-overview", label: "Bigin Overview", ready: true },
-  { id: "crm-overview", label: "Overview", ready: true },
-  { id: "closed-deals", label: "Conversion", ready: true },
-  { id: "standard-pipeline", label: "Pipeline", ready: true },
-  { id: "fy-comparison", label: "FY Comparison 2025-26 & 2026-27", ready: true },
+  { id: "crm-overview", label: "Overview", ready: true, icon: IconTarget },
+  { id: "closed-deals", label: "Conversion", ready: true, icon: IconWallet },
+  { id: "standard-pipeline", label: "Pipeline", ready: true, icon: IconTrendingUp },
+  { id: "fy-comparison", label: "FY Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
 ];
 
 export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose, activePage, onNavigate }) {
@@ -16,12 +16,13 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
       )}
 
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-40 w-64 shrink-0 bg-navy-950 text-white flex flex-col min-h-screen
+        className={`fixed md:sticky inset-y-0 left-0 md:top-0 z-40 w-64 shrink-0 text-white flex flex-col h-screen overflow-y-auto
+          bg-gradient-to-b from-indigo-950 via-[#241a52] to-violet-900
           transform transition-transform duration-200
           ${open ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
         <div className="px-6 py-6 border-b border-white/10 flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg bg-pink-500/15 text-pink-400 flex items-center justify-center shrink-0">
+          <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-purple-400 text-white flex items-center justify-center shrink-0 shadow-sm shadow-black/20">
             <IconChartBars className="w-[18px] h-[18px]" />
           </span>
           <div className="min-w-0">
@@ -45,18 +46,25 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
           </p>
           {NAV_ITEMS.map((item) => {
             const isActive = activePage === item.id;
+            const Icon = item.icon;
             return (
               <button
                 key={item.id}
                 disabled={!item.ready}
                 onClick={() => item.ready && onNavigate(item.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors
-                  ${isActive ? "bg-white/10" : item.ready ? "hover:bg-white/5" : "opacity-40 cursor-not-allowed"}`}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-left transition-colors
+                  ${
+                    isActive
+                      ? "bg-gradient-to-r from-indigo-600 to-purple-600 shadow-sm shadow-black/20"
+                      : item.ready
+                      ? "hover:bg-white/5"
+                      : "opacity-40 cursor-not-allowed"
+                  }`}
               >
-                <IconChartBars className={`w-4 h-4 shrink-0 ${isActive ? "text-pink-400" : "text-white/40"}`} />
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-white" : "text-white/40"}`} />
                 <span>{item.label}</span>
                 {isActive && (
-                  <span className="ml-auto flex items-center gap-1.5 text-[10px] text-emerald-400 font-semibold uppercase tracking-wide">
+                  <span className="ml-auto flex items-center gap-1.5 text-[10px] text-emerald-300 font-semibold uppercase tracking-wide">
                     <IconDot className="w-1.5 h-1.5" />
                     Live
                   </span>
@@ -78,8 +86,9 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
           <button
             onClick={onRefresh}
             disabled={loading}
-            className="w-full mb-2 py-2 rounded-lg bg-pink-500 hover:bg-pink-400 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+            className="w-full mb-2 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-400 hover:to-purple-400 disabled:opacity-50 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm shadow-black/20"
           >
+            <IconRefresh className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             {loading ? "Refreshing…" : "Refresh live data"}
           </button>
           {lastUpdated && <p>Last pulled: {lastUpdated}</p>}

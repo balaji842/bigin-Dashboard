@@ -115,3 +115,39 @@ export function IconX(props) {
     </svg>
   );
 }
+
+export function IconCalendar(props) {
+  return (
+    <svg {...base} className={props.className}>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+      <path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" />
+    </svg>
+  );
+}
+
+export function IconTag(props) {
+  return (
+    <svg {...base} className={props.className}>
+      <path d="M11.5 3.5H6a1.5 1.5 0 00-1.5 1.5v5.5c0 .4.16.78.44 1.06l8.5 8.5a1.5 1.5 0 002.12 0l5.5-5.5a1.5 1.5 0 000-2.12l-8.5-8.5a1.5 1.5 0 00-1.06-.44z" />
+      <circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function IconLayers(props) {
+  return (
+    <svg {...base} className={props.className}>
+      <path d="M12 3.5l8.5 4.5-8.5 4.5-8.5-4.5L12 3.5z" />
+      <path d="M3.5 12.5L12 17l8.5-4.5M3.5 16.5L12 21l8.5-4.5" />
+    </svg>
+  );
+}
+
+export function IconRefresh(props) {
+  return (
+    <svg {...base} className={props.className}>
+      <path d="M20 11a8 8 0 10-2.2 6.6" />
+      <path d="M20 5v6h-6" />
+    </svg>
+  );
+}

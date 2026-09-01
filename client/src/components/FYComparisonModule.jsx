@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import MonthDonorBreakdownModal from "./MonthDonorBreakdownModal.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
+import { IconBuilding, IconCalendar, IconTag, IconUsers, IconLayers } from "./icons.jsx";
+import { moneyCr } from "../lib/format.js";
 
 const money = (n) =>
   new Intl.NumberFormat("en-IN", {
@@ -8,6 +10,16 @@ const money = (n) =>
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(n || 0);
+
+// Color/icon pairing per table section — gives each panel a distinct
+// identity instead of every header being the same flat navy bar.
+const TABLE_THEMES = {
+  type: { bar: "bg-gradient-to-r from-rose-500 to-orange-400", icon: IconTag },
+  donorType: { bar: "bg-gradient-to-r from-indigo-600 to-blue-500", icon: IconUsers },
+  kam: { bar: "bg-gradient-to-r from-orange-500 to-amber-400", icon: IconUsers },
+  platform: { bar: "bg-gradient-to-r from-emerald-600 to-teal-500", icon: IconLayers },
+  month: { bar: "bg-gradient-to-r from-blue-600 to-indigo-500", icon: IconCalendar },
+};
 
 // Generic multi-select pill filter, reused for Type, KAM, SPOC, and
 // Platform. `selected: null` means "everything" (no restriction, no
@@ -28,7 +40,7 @@ function FilterGroup({ label, options, selected, onToggle }) {
               onClick={() => onToggle(opt)}
               className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
                 active
-                  ? "bg-navy-900 text-white border-navy-900"
+                  ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-transparent shadow-sm"
                   : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
               }`}
             >
@@ -69,10 +81,10 @@ function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll }
         onClick={() => setOpen((v) => !v)}
         className={`flex items-center gap-2 text-sm px-3.5 py-2 rounded-lg border transition-colors ${
           open
-            ? "border-navy-900 bg-navy-900 text-white"
+            ? "border-transparent bg-gradient-to-r from-indigo-600 to-purple-600 text-white"
             : allSelected
             ? "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-            : "border-navy-900 bg-navy-100 text-navy-900"
+            : "border-indigo-200 bg-indigo-50 text-indigo-900"
         }`}
       >
         <span className="font-semibold">{label}</span>
@@ -96,7 +108,7 @@ function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll }
               <button
                 type="button"
                 onClick={onSelectAll}
-                className="text-xs font-semibold text-navy-700 hover:underline"
+                className="text-xs font-semibold text-indigo-600 hover:underline"
               >
                 Select all
               </button>
@@ -114,7 +126,7 @@ function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll }
                     type="checkbox"
                     checked={checked}
                     onChange={() => onToggle(opt)}
-                    className="w-4 h-4 rounded border-slate-300 accent-navy-900 cursor-pointer"
+                    className="w-4 h-4 rounded border-slate-300 accent-indigo-600 cursor-pointer"
                   />
                   <span className="truncate">{opt}</span>
                 </label>
@@ -127,62 +139,139 @@ function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll }
   );
 }
 
+// A small real trend chart built from actual monthly amounts (not
+// decorative filler) — bars plus a connecting line, colored to match
+// the card it sits in. Renders nothing if there isn't enough data yet.
+function Sparkline({ values, stroke, fill }) {
+  if (!values || values.filter((v) => v > 0).length < 2) return null;
+
+  const w = 100;
+  const h = 36;
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const stepX = w / (values.length - 1 || 1);
+  const points = values.map((v, i) => [i * stepX, h - ((v - min) / range) * h]);
+  const barWidth = Math.max(stepX * 0.5, 2);
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-14 mt-4" preserveAspectRatio="none">
+      {points.map(([x, y], i) => (
+        <rect key={i} x={x - barWidth / 2} y={y} width={barWidth} height={h - y} fill={fill} opacity={0.35} rx={1} />
+      ))}
+      <polyline
+        points={points.map(([x, y]) => `${x},${y}`).join(" ")}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {points.slice(0, -1).map(([x, y], i) => (
+        <circle key={`d-${i}`} cx={x} cy={y} r={2} fill={stroke} />
+      ))}
+    </svg>
+  );
+}
+
 // One of the three cumulative Conversion cards. `diff` (only passed on
 // the FY 2026-2027 card) shows the ▼/▲ % plus the bold ₹ gap vs the
-// same-period card right before it.
-function ConversionCard({ title, sublabel, amount, donors, donorColorClass, diff }) {
+// same-period card right before it. `theme` colors the title, big
+// number, badge, and sparkline consistently. `sparkValues` is the real
+// month-by-month amount series behind this card's total.
+const CARD_THEMES = {
+  blue: {
+    bg: "bg-gradient-to-b from-blue-50/70 to-white",
+    title: "text-blue-700",
+    number: "text-blue-700",
+    badge: "bg-blue-100 text-blue-600",
+    sparkStroke: "#3b82f6",
+    sparkFill: "#60a5fa",
+  },
+  emerald: {
+    bg: "bg-gradient-to-b from-emerald-50/70 to-white",
+    title: "text-emerald-700",
+    number: "text-emerald-700",
+    badge: "bg-emerald-100 text-emerald-600",
+    sparkStroke: "#10b981",
+    sparkFill: "#34d399",
+  },
+  rose: {
+    bg: "bg-gradient-to-b from-rose-50/70 to-white",
+    title: "text-rose-600",
+    number: "text-rose-600",
+    badge: "bg-rose-100 text-rose-600",
+    sparkStroke: "#f43f5e",
+    sparkFill: "#fb7185",
+  },
+};
+
+function ConversionCard({ title, sublabel, amount, donors, theme, diff, sparkValues }) {
+  const t = CARD_THEMES[theme] || CARD_THEMES.blue;
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-      <p className="text-xs uppercase tracking-wide text-slate-600 font-bold mb-1">{title}</p>
+    <div className={`rounded-2xl border border-slate-100 shadow-sm p-5 relative ${t.bg}`}>
+      <span className={`absolute top-5 right-5 w-8 h-8 rounded-full flex items-center justify-center ${t.badge}`}>
+        <IconCalendar className="w-4 h-4" />
+      </span>
+      <p className={`text-xs uppercase tracking-wide font-bold mb-1 pr-8 ${t.title}`}>{title}</p>
       {sublabel && <p className="text-xs text-slate-500 font-medium mb-3">{sublabel}</p>}
-      <p className="font-display text-2xl font-bold text-navy-700">{money(amount)}</p>
-      <p className={`text-xs font-semibold mt-1 ${donorColorClass}`}>{donors} donors</p>
+      <p className={`font-display text-2xl font-bold ${t.number}`}>{moneyCr(amount)}</p>
+      <p className={`text-xs font-semibold mt-1 ${t.title}`}>{donors} donors</p>
       {diff && diff.pctChange != null && (
         <p className={`text-xs font-semibold mt-3 ${diff.pctChange >= 0 ? "text-emerald-600" : "text-red-500"}`}>
           {diff.pctChange >= 0 ? "▲" : "▼"} {Math.abs(diff.pctChange).toFixed(1)}%
           <span className="font-bold ml-1">
-            ({money(diff.amount)})
+            ({moneyCr(diff.amount)})
           </span>
         </p>
       )}
+      <Sparkline values={sparkValues} stroke={t.sparkStroke} fill={t.sparkFill} />
     </div>
   );
 }
 
-// 4th card, shown full-width below the 3-card row: this calendar month
-// only (not cumulative) for both years, side by side. Automatically
-// shows September once the fiscal cutoff moves there.
+// 4th card, sitting in the same row as the 3 Conversion cards: this
+// calendar month only (not cumulative) for both years, stacked with a
+// dashed divider — last year's figure is the headline, this year's is
+// the small comparison figure below it. Automatically shows September
+// once the fiscal cutoff moves there.
 function MonthComparisonCard({ monthName, fy1, fy2, amountA, donorsA, amountB, donorsB, diffPct, diffAmount }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-      <p className="text-xs uppercase tracking-wide text-slate-600 font-bold mb-1">{monthName}</p>
-      <p className="text-sm text-slate-500 font-medium mb-5">Month vs month</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-5">
-        <div>
-          <p className="text-sm text-slate-500 font-semibold mb-1">FY {fy1}</p>
-          <p className="font-display text-2xl font-bold text-navy-700">{money(amountA)}</p>
-          <p className="text-sm text-blue-700 font-semibold mt-1">{donorsA} donors</p>
-        </div>
-        <div>
-          <p className="text-sm text-slate-500 font-semibold mb-1">FY {fy2}</p>
-          <p className="font-display text-2xl font-bold text-pink-600">{money(amountB)}</p>
-          <p className="text-sm text-pink-700 font-semibold mt-1">{donorsB} donors</p>
-        </div>
-      </div>
+    <div className="rounded-2xl border border-slate-100 shadow-sm p-5 relative bg-gradient-to-b from-indigo-50/70 to-white">
+      <span className="absolute top-5 right-5 w-8 h-8 rounded-full flex items-center justify-center bg-indigo-100 text-indigo-600">
+        <IconCalendar className="w-4 h-4" />
+      </span>
+      <p className="text-xs uppercase tracking-wide text-slate-800 font-bold mb-3 pr-8">{monthName}</p>
+
+      <p className="text-xs text-slate-500 font-semibold">FY {fy1}</p>
+      <p className="font-display text-2xl font-bold text-indigo-600">{moneyCr(amountA)}</p>
+      <p className="text-xs text-indigo-600 font-semibold mt-1">{donorsA} donors</p>
+
+      <div className="border-t border-dashed border-slate-200 my-3" />
+
+      <p className="text-xs text-slate-500 font-semibold">FY {fy2}</p>
+      <p className="font-display text-lg font-bold text-pink-600">{moneyCr(amountB)}</p>
+      <p className="text-xs text-pink-600 font-semibold mt-1">{donorsB} donors</p>
+
       {diffPct != null && (
-        <p className={`text-sm font-semibold mt-5 ${diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-          {diffPct >= 0 ? "▲" : "▼"} {Math.abs(diffPct).toFixed(1)}%
-          <span className="font-bold ml-1">({money(diffAmount)})</span>
-        </p>
+        <>
+          <div className="border-t border-dashed border-slate-200 my-3" />
+          <p className={`text-xs font-semibold ${diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+            {diffPct >= 0 ? "▲" : "▼"} {Math.abs(diffPct).toFixed(1)}%
+            <span className="font-bold ml-1">({moneyCr(diffAmount)})</span>
+          </p>
+        </>
       )}
     </div>
   );
 }
 
-function ComparisonTable({ title, rows, fy1, fy2 }) {
+function ComparisonTable({ title, rows, fy1, fy2, theme }) {
+  const { bar, icon: Icon } = TABLE_THEMES[theme] || TABLE_THEMES.type;
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-      <div className="bg-navy-900 text-white px-4 sm:px-5 py-3">
+      <div className={`${bar} text-white px-4 sm:px-5 py-3 flex items-center gap-2`}>
+        <Icon className="w-4 h-4" />
         <p className="font-display font-semibold text-sm">{title}</p>
       </div>
       <div className="overflow-x-auto">
@@ -232,9 +321,11 @@ function ComparisonTable({ title, rows, fy1, fy2 }) {
 // cells are always clickable (when > 0) and open a simple donor list for
 // that one FY+month via onDonorCountClick.
 function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
+  const { bar, icon: Icon } = TABLE_THEMES.month;
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-      <div className="bg-navy-900 text-white px-4 sm:px-5 py-3">
+      <div className={`${bar} text-white px-4 sm:px-5 py-3 flex items-center gap-2`}>
+        <Icon className="w-4 h-4" />
         <p className="font-display font-semibold text-sm">By Month</p>
       </div>
       <div className="overflow-x-auto">
@@ -339,7 +430,6 @@ export default function FYComparisonModule() {
   const toggleKam = toggleIn(setSelectedKams, filterOptions.kams);
   const toggleSpoc = toggleIn(setSelectedSpocs, filterOptions.spocs);
   const togglePlatform = toggleIn(setSelectedPlatforms, filterOptions.platforms);
-
   const buildFilterParams = () => {
     const params = new URLSearchParams({ fy1, fy2 });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
@@ -482,38 +572,43 @@ export default function FYComparisonModule() {
       {filterBar}
 
       <div>
-        <p className="font-display font-semibold text-sm text-navy-900 mb-3">Conversion</p>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
+            <IconBuilding className="w-4 h-4" />
+          </span>
+          <p className="font-display font-bold text-sm text-navy-900">Conversion</p>
+        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <ConversionCard
             title={`FY ${data.fy1}`}
             sublabel="Full year"
             amount={conv.fy1Full?.amount}
             donors={conv.fy1Full?.donors}
-            donorColorClass="text-blue-700"
+            theme="blue"
+            sparkValues={data.byMonth?.map((r) => r.amountA)}
           />
           <ConversionCard
             title={`FY ${data.fy1}`}
             sublabel={`Apr\u2013${monthLabel} (same period)`}
             amount={conv.fy1YTD?.amount}
             donors={conv.fy1YTD?.donors}
-            donorColorClass="text-emerald-700"
+            theme="emerald"
+            sparkValues={data.byMonth?.filter((r) => r.diffPct != null).map((r) => r.amountA)}
           />
           <ConversionCard
             title={`FY ${data.fy2}`}
             sublabel={`Apr\u2013${monthLabel}`}
             amount={conv.fy2YTD?.amount}
             donors={conv.fy2YTD?.donors}
-            donorColorClass="text-pink-700"
+            theme="rose"
+            sparkValues={data.byMonth?.filter((r) => r.diffPct != null).map((r) => r.amountB)}
             diff={{
               pctChange: conv.ytdPctChange,
               amount: conv.ytdDiffAmount,
               vsLabel: `FY ${data.fy1} same period`,
             }}
           />
-        </div>
-
-        <div className="mt-4">
           <MonthComparisonCard
             monthName={conv.currentMonth?.name}
             fy1={data.fy1}
@@ -537,10 +632,10 @@ export default function FYComparisonModule() {
       />
 
       <div className="grid sm:grid-cols-2 gap-5">
-        <ComparisonTable title="By Type (Cash/Kind/SE)" rows={data.byType} fy1={data.fy1} fy2={data.fy2} />
-        <ComparisonTable title="By Donor Type" rows={data.byDonorType} fy1={data.fy1} fy2={data.fy2} />
-        <ComparisonTable title="By KAM" rows={data.byKAM} fy1={data.fy1} fy2={data.fy2} />
-        <ComparisonTable title="By Platform" rows={data.byPlatform} fy1={data.fy1} fy2={data.fy2} />
+        <ComparisonTable title="By Type (Cash/Kind/SE)" rows={data.byType} fy1={data.fy1} fy2={data.fy2} theme="type" />
+        <ComparisonTable title="By Donor Type" rows={data.byDonorType} fy1={data.fy1} fy2={data.fy2} theme="donorType" />
+        <ComparisonTable title="By KAM" rows={data.byKAM} fy1={data.fy1} fy2={data.fy2} theme="kam" />
+        <ComparisonTable title="By Platform" rows={data.byPlatform} fy1={data.fy1} fy2={data.fy2} theme="platform" />
       </div>
 
       <MonthDonorBreakdownModal
