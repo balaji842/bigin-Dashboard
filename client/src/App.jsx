@@ -7,6 +7,7 @@ import { api } from "./api.js";
 import ClosedDealsModule from "./components/ClosedDealsModule.jsx";
 import StandardPipelineModule from "./components/StandardPipelineModule.jsx";
 import FYComparisonModule from "./components/FYComparisonModule.jsx";
+import EngagementStatusModule from "./components/EngagementStatusModule.jsx";
 
 const PAGE_TITLES = {
   "closed-deals": {
@@ -20,6 +21,10 @@ const PAGE_TITLES = {
 "fy-comparison": {
   title: "FY 2025-26 vs FY 2026-27",
   sub: "Side-by-side comparison of closed deals and standard pipeline across both fiscal years.",
+},
+"engagement-status": {
+  title: "Engagement Status",
+  sub: "Donor-wise retention comparison: who gave in FY 2025-26, and whether they're still engaged in FY 2026-27.",
 },
   "bigin-overview": {
     title: "Bigin CRM · Live Analysis Dashboard",
@@ -115,6 +120,7 @@ export default function App() {
           {activePage === "crm-overview" && <CRMOverview />}
           {activePage === "standard-pipeline" && <StandardPipelineModule />}
           {activePage === "fy-comparison" && <FYComparisonModule />}
+          {activePage === "engagement-status" && <EngagementStatusModule />}
           {activePage === "closed-deals" && <ClosedDealsModule />}
         </main>
 

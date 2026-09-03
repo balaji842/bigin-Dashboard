@@ -1,11 +1,12 @@
-import { IconChartBars, IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar } from "./icons.jsx";
-
+import { IconChartBars, IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar, IconCheckCircle } from "./icons.jsx";
 const NAV_ITEMS = [
   //{ id: "bigin-overview", label: "Bigin Overview", ready: true },
   { id: "crm-overview", label: "Overview", ready: true, icon: IconTarget },
   { id: "closed-deals", label: "Conversion", ready: true, icon: IconWallet },
   { id: "standard-pipeline", label: "Pipeline", ready: true, icon: IconTrendingUp },
   { id: "fy-comparison", label: "FY Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
+    { id: "engagement-status", label: "Engagement Status", ready: true, icon: IconCheckCircle },
+
 ];
 
 export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose, activePage, onNavigate }) {

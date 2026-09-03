@@ -286,6 +286,96 @@ export function buildMonthDonorBreakdown(deals, fy1, fy2, month) {
   };
 }
 
+// Full donor-wise retention view: every donor who gave anything in fy1,
+// broken into one row per (donor, Type) combination, showing what that
+// same donor+type did in fy2. "Engaged" means the donor has ANY closed
+// deal in fy2 (any type) — a donor can be "Engaged" overall while still
+// showing "-" on a specific type row they didn't repeat.
+export function buildEngagementComparison(deals, fy1, fy2) {
+  const byDonor = {}; // donorKey -> { account, byFY: { [fy]: { [type]: {amount, kam, platform, spoc, donorType} } } }
+
+  for (const d of deals) {
+    const key = uniqueDonorKey(d);
+    if (!key) continue;
+    const fy = pick(d, "Fiscal_year", "Unspecified");
+    const type = pick(d, "Type");
+    if (!byDonor[key]) byDonor[key] = { account: pick(d, "Account_Name"), byFY: {} };
+    if (!byDonor[key].byFY[fy]) byDonor[key].byFY[fy] = {};
+    if (!byDonor[key].byFY[fy][type]) {
+      byDonor[key].byFY[fy][type] = { amount: 0 };
+    }
+    const bucket = byDonor[key].byFY[fy][type];
+    bucket.amount += pickNumber(d, "Amount");
+    // Last deal seen wins for these donor-attribute fields — a reasonable
+    // "most recent" proxy since we don't have a definitive record here.
+    bucket.kam = pick(d, "Pipeline_KAM");
+    bucket.platform = pick(d, "Platform");
+    bucket.spoc = pick(d, "Spoc");
+    bucket.donorType = pick(d, "Type_of_donor");
+    bucket.category = pick(d, "Category");
+  }
+
+  const rows = [];
+  for (const info of Object.values(byDonor)) {
+    const fy1Types = info.byFY[fy1] || {};
+    const fy2Types = info.byFY[fy2] || {};
+    if (Object.keys(fy1Types).length === 0) continue; // base = donors active in fy1
+
+    const engaged = Object.keys(fy2Types).length > 0;
+    const rep = Object.values(fy2Types)[0] || Object.values(fy1Types)[0];
+
+    const allTypes = new Set([...Object.keys(fy1Types), ...Object.keys(fy2Types)]);
+    for (const type of allTypes) {
+      const a1 = fy1Types[type];
+      const a2 = fy2Types[type];
+      const fy1Amount = a1 ? a1.amount : null;
+      const fy2Amount = a2 ? a2.amount : null;
+      let diffAmount = null;
+      let diffPct = null;
+      if (fy1Amount != null && fy2Amount != null) {
+        diffAmount = fy2Amount - fy1Amount;
+        diffPct = fy1Amount > 0 ? (diffAmount / fy1Amount) * 100 : fy2Amount > 0 ? 100 : 0;
+      }
+      rows.push({
+        account: info.account,
+        fy1Amount,
+        fy1Type: fy1Amount != null ? type : null,
+        fy2Amount,
+        fy2Type: fy2Amount != null ? type : null,
+        diffAmount,
+        absDiffAmount: diffAmount != null ? Math.abs(diffAmount) : null,
+        diffPct,
+        engaged,
+        platform: rep.platform,
+        spoc: rep.spoc,
+        kam: rep.kam,
+        donorType: rep.donorType,
+        // Category is its own field on the deal (A/B/C), separate from KAM.
+        category: rep.category,
+      });
+    }
+  }
+
+  // Group by donor before sorting so a donor's multiple Type rows always
+  // land next to each other — required for the table to merge Donor
+  // Name and Engagement Status into one visual row per donor. Donors are
+  // ordered by their combined fy1+fy2 total; each donor's own rows are
+  // ordered by fy1Amount (biggest first).
+  const byAccount = {};
+  for (const row of rows) {
+    if (!byAccount[row.account]) byAccount[row.account] = [];
+    byAccount[row.account].push(row);
+  }
+  const groups = Object.values(byAccount).map((groupRows) => {
+    const total = groupRows.reduce((s, r) => s + (r.fy1Amount || 0) + (r.fy2Amount || 0), 0);
+    groupRows.sort((a, b) => (b.fy1Amount || 0) - (a.fy1Amount || 0));
+    return { total, groupRows };
+  });
+  groups.sort((a, b) => b.total - a.total);
+
+  return groups.flatMap((g) => g.groupRows);
+}
+
 export function totalsFor(deals) {
   return {
     amount: deals.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0),

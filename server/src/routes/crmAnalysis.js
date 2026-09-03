@@ -15,6 +15,7 @@ import {
   fiscalMonthIndex,
   ytdTotals,
   buildMonthDonorBreakdown,
+  buildEngagementComparison,
 } from "../lib/dealHelpers.js";
 
 
@@ -476,6 +477,30 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
       fy,
       month,
       donors: rows,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+// GET /api/crm-analysis/engagement-status?fy1=2025-2026&fy2=2026-2027
+//
+// Donor-wise retention view: every donor who gave in fy1, one row per
+// (donor, Type) combo, showing whether/what they gave in fy2. See
+// buildEngagementComparison in dealHelpers.js for the exact row logic.
+router.get("/crm-analysis/engagement-status", async (req, res) => {
+  const fy1 = req.query.fy1 || "2025-2026";
+  const fy2 = req.query.fy2 || "2026-2027";
+
+  try {
+    const deals = await fetchAllRecords("Pipelines");
+    const closedDeals = deals.filter(isClosed);
+    const rows = buildEngagementComparison(closedDeals, fy1, fy2);
+
+    res.json({
+      fy1,
+      fy2,
+      rows,
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {

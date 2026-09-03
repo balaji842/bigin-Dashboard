@@ -4,13 +4,6 @@ import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import { IconBuilding, IconCalendar, IconTag, IconUsers, IconLayers } from "./icons.jsx";
 import { moneyCr } from "../lib/format.js";
 
-const money = (n) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(n || 0);
-
 // Color/icon pairing per table section — gives each panel a distinct
 // identity instead of every header being the same flat navy bar.
 const TABLE_THEMES = {
@@ -291,8 +284,8 @@ function ComparisonTable({ title, rows, fy1, fy2, theme }) {
               return (
                 <tr key={r.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                   <td className="px-4 py-2 text-navy-900 font-medium whitespace-nowrap">{r.name}</td>
-                  <td className="px-4 py-2 text-right text-slate-600">{money(r.amountA)}</td>
-                  <td className="px-4 py-2 text-right text-slate-600">{money(r.amountB)}</td>
+                  <td className="px-4 py-2 text-right text-slate-600">{moneyCr(r.amountA)}</td>
+                  <td className="px-4 py-2 text-right text-slate-600">{moneyCr(r.amountB)}</td>
                   <td className={`px-4 py-2 text-right font-semibold ${change >= 0 ? "text-emerald-600" : "text-red-500"}`}>
                     {change >= 0 ? "+" : ""}{change.toFixed(0)}%
                   </td>
@@ -348,7 +341,7 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
             {rows.map((r, i) => (
               <tr key={r.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                 <td className="px-4 py-2 text-navy-900 font-medium whitespace-nowrap">{r.name}</td>
-                <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{money(r.amountA)}</td>
+                <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{moneyCr(r.amountA)}</td>
                 <td className="px-4 py-2 text-right border-l-0">
                   {r.donorsA > 0 ? (
                     <button
@@ -362,7 +355,7 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
                     <span className="text-slate-400">{r.donorsA}</span>
                   )}
                 </td>
-                <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{money(r.amountB)}</td>
+                <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{moneyCr(r.amountB)}</td>
                 <td className="px-4 py-2 text-right">
                   {r.donorsB > 0 ? (
                     <button
@@ -386,7 +379,7 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
                       className={`font-semibold hover:underline cursor-pointer ${r.diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}
                     >
                       {r.diffPct >= 0 ? "▲" : "▼"} {Math.abs(r.diffPct).toFixed(1)}%{" "}
-                      <span className="font-bold">({money(r.diffAmount)})</span>
+                      <span className="font-bold">({moneyCr(r.diffAmount)})</span>
                     </button>
                   )}
                 </td>
