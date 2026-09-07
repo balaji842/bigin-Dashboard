@@ -16,7 +16,10 @@ import {
   ytdTotals,
   buildMonthDonorBreakdown,
   buildEngagementComparison,
+  buildTypePlatformBreakdown,
+  STANDARD_TYPES,
 } from "../lib/dealHelpers.js";
+import { getTargetsFor, setTarget } from "../lib/targetsStore.js";
 
 
 // Parses a comma-separated query param into a trimmed array, or null if
@@ -49,11 +52,12 @@ router.get("/crm-analysis/filter-options", async (_req, res) => {
     const distinct = (field) =>
       [...new Set(deals.map((d) => pick(d, field)))].sort((a, b) => a.localeCompare(b));
 
-        res.json({
+    res.json({
       types: distinct("Type").filter((v) => v !== "Unspecified"),
       kams: distinct("Pipeline_KAM"),
       spocs: distinct("Spoc"),
       platforms: distinct("Platform"),
+      donorTypes: distinct("Type_of_donor"),
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
@@ -81,6 +85,15 @@ router.get("/crm-analysis/overview", async (req, res) => {
         thisFY: totalsFor(closedThisFY),
       },
       standardPipeline: totalsFor(standardDeals),
+
+      // Totals per fiscal year found in the closed deals — powers the
+      // clickable FY cards on the Overview page. "Unspecified" (deals
+      // with no Fiscal_year set) is dropped since it isn't a real year
+      // to click into; sorted chronologically (the "YYYY-YYYY" format
+      // sorts correctly as plain strings).
+      byFiscalYear: groupSummary(closedDeals, "Fiscal_year")
+        .filter((r) => r.name !== "Unspecified")
+        .sort((a, b) => a.name.localeCompare(b.name)),
 
       monthWise: monthWiseSummary(closedThisFY, "Closing_Date"),
 
@@ -415,9 +428,11 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
 
 // GET /api/crm-analysis/fy-comparison/month-donor-list?fy=2025-2026&month=August&types=&kams=&spocs=&platforms=
 //
-// Raw deal-level rows (one row per closed deal, not aggregated per
-// donor) for one fiscal year + month — powers the drilldown popup when
-// a Donors count cell is clicked in the By Month table.
+// One row per unique donor (not per deal) for one fiscal year + month —
+// powers the drilldown popup when a Donors count cell is clicked in the
+// By Month table. A donor with multiple gifts that month is merged into
+// a single row (amounts summed, Platform/KAM/SPOC joined) so the popup's
+// row count always matches the unique-donor count shown in the table.
 router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
   const fy = req.query.fy;
   const month = req.query.month;
@@ -483,6 +498,7 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
+
 // GET /api/crm-analysis/engagement-status?fy1=2025-2026&fy2=2026-2027
 //
 // Donor-wise retention view: every donor who gave in fy1, one row per
@@ -507,4 +523,108 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
+
+// GET /api/crm-analysis/kam-comparison?kam=NGOs%20%2F%20NPOs&fy1=2025-2026&fy2=2026-2027
+//
+// Type x Platform breakdown for one KAM, for both fiscal years — powers
+// the "Comparison of [KAM] for the year [FY]" tables on Engagement
+// Status. Returns 3 totals per year:
+//   - conversion: full-year closed deals (used as "Total conversion")
+//   - ytd:        closed deals from April up to the current fiscal
+//                  month (used as fy1's "Apr-<month>" comparison row)
+//   - pipeline:   open/Standard Pipeline deals (used as fy2's "Pipeline"
+//                  row; Balance-to-achieve is computed client-side from
+//                  Target - conversion - pipeline, since Target is a
+//                  separately-editable value, not CRM data)
+router.get("/crm-analysis/kam-comparison", async (req, res) => {
+  const kam = req.query.kam;
+  const fy1 = req.query.fy1 || "2025-2026";
+  const fy2 = req.query.fy2 || "2026-2027";
+  const spoc = req.query.spoc || null;
+  const donorType = req.query.donorType || null;
+
+  if (!kam) {
+    return res.status(400).json({ error: "kam query param is required" });
+  }
+
+  try {
+    const deals = await fetchAllRecords("Pipelines");
+    const matchesFilters = (d) =>
+      pick(d, "Pipeline_KAM") === kam &&
+      (!spoc || pick(d, "Spoc") === spoc) &&
+      (!donorType || pick(d, "Type_of_donor") === donorType);
+
+    const closedDeals = deals.filter(isClosed).filter(matchesFilters);
+    const standardDeals = deals.filter(isStandardPipeline).filter(matchesFilters);
+
+    const now = new Date();
+    const cutoffIndex = fiscalMonthIndex(now);
+    const currentMonthLabel = now.toLocaleString("en-US", { month: "short" });
+
+    function buildYear(fy) {
+      const closedFY = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy);
+      const standardFY = standardDeals.filter((d) => pick(d, "Fiscal_year", "") === fy);
+      const ytdDeals = closedFY.filter((d) => {
+        const raw = d.Closing_Date;
+        if (!raw) return false;
+        const date = new Date(raw);
+        if (isNaN(date)) return false;
+        return fiscalMonthIndex(date) <= cutoffIndex;
+      });
+
+      return {
+        fy,
+        conversion: buildTypePlatformBreakdown(closedFY),
+        ytd: buildTypePlatformBreakdown(ytdDeals),
+        pipeline: buildTypePlatformBreakdown(standardFY),
+      };
+    }
+
+    res.json({
+      kam,
+      currentMonthLabel,
+      fy1: buildYear(fy1),
+      fy2: buildYear(fy2),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/crm-analysis/targets?kam=...&fy1=...&fy2=...
+router.get("/crm-analysis/targets", (req, res) => {
+  const kam = req.query.kam;
+  const fy1 = req.query.fy1 || "2025-2026";
+  const fy2 = req.query.fy2 || "2026-2027";
+
+  if (!kam) {
+    return res.status(400).json({ error: "kam query param is required" });
+  }
+
+  try {
+    res.json({
+      kam,
+      fy1: { fy: fy1, targets: getTargetsFor(fy1, kam, STANDARD_TYPES) },
+      fy2: { fy: fy2, targets: getTargetsFor(fy2, kam, STANDARD_TYPES) },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/crm-analysis/targets  { kam, fy, type, value }
+router.put("/crm-analysis/targets", (req, res) => {
+  const { kam, fy, type, value } = req.body || {};
+  if (!kam || !fy || !type || typeof value !== "number" || Number.isNaN(value)) {
+    return res.status(400).json({ error: "kam, fy, type (string) and value (number) are required" });
+  }
+  try {
+    const saved = setTarget(fy, kam, type, value);
+    res.json({ kam, fy, type, value: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

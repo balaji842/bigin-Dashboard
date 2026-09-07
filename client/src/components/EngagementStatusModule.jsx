@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { moneyCr } from "../lib/format.js";
 import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
+import KamComparisonTables from "./KamComparisonTables.jsx";
 
 function SearchIcon(props) {
   return (
@@ -481,6 +482,8 @@ export default function EngagementStatusModule() {
 
   return (
     <div className="space-y-5">
+      <KamComparisonTables fy1={fy1} fy2={fy2} />
+
       {/* Summary cards — click to filter Engagement Status; the Total
           card resets that filter back to showing everyone. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

@@ -28,6 +28,27 @@ function KpiCard({ label, amount, donors, accent = "pink" }) {
   );
 }
 
+// Clickable per-fiscal-year card — one per year found in the closed
+// deals. Clicking it sets the page's `fy` state (same state the
+// dropdown drives), so the Month-wise table and every breakdown below
+// switches to that year. The currently selected year gets a highlighted
+// border/ring so it's clear which one is active.
+function FYCard({ year, amount, donors, active, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-left rounded-2xl border shadow-sm p-4 transition-colors ${
+        active ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200" : "border-slate-100 bg-white hover:border-slate-200"
+      }`}
+    >
+      <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">FY {year}</p>
+      <p className={`font-display text-xl font-bold ${active ? "text-pink-600" : "text-navy-700"}`}>{moneyCr(amount)}</p>
+      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} unique donors</p>
+    </button>
+  );
+}
+
 function MiniStatCard({ name, amount, donors }) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 min-w-0">
@@ -177,13 +198,13 @@ export default function CRMOverview() {
           onChange={(e) => setFy(e.target.value)}
           className="text-sm border border-slate-200 rounded-lg px-3 py-1.5"
         >
-          <option value="2024-2025">2024-2025</option>
-          <option value="2025-2026">2025-2026</option>
-          <option value="2026-2027">2026-2027</option>
+          {data.byFiscalYear.map((y) => (
+            <option key={y.name} value={y.name}>{y.name}</option>
+          ))}
         </select>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <KpiCard
           label="Closed Deals (All Time)"
           amount={data.closed.allTime.amount}
@@ -191,17 +212,28 @@ export default function CRMOverview() {
           accent="emerald"
         />
         <KpiCard
-          label={`Closed Deals (FY ${data.fy})`}
-          amount={data.closed.thisFY.amount}
-          donors={data.closed.thisFY.donors}
-          accent="pink"
-        />
-        <KpiCard
           label="Standard Pipeline"
           amount={data.standardPipeline.amount}
           donors={data.standardPipeline.donors}
           accent="navy"
         />
+      </div>
+
+      <div>
+        <p className="font-display font-semibold text-navy-900 mb-3 text-sm">Closed Deals by Fiscal Year</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {data.byFiscalYear.map((y) => (
+            <FYCard
+              key={y.name}
+              year={y.name}
+              amount={y.amount}
+              donors={y.donors}
+              active={y.name === fy}
+              onClick={() => setFy(y.name)}
+            />
+          ))}
+          {data.byFiscalYear.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">

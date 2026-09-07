@@ -376,6 +376,64 @@ export function buildEngagementComparison(deals, fy1, fy2) {
   return groups.flatMap((g) => g.groupRows);
 }
 
+// The 3 standard engagement Types. Tables that group by Type always show
+// all 3, zero-filled, even if a KAM/FY combo has no deals of that Type —
+// keeps the table shape consistent for the KAM comparison view.
+export const STANDARD_TYPES = ["Cash", "Kind", "School Engagement"];
+
+// Groups a set of deals by Type, then by Platform within each Type,
+// summing amount and unique donor count at both levels. Always returns
+// all 3 STANDARD_TYPES (zero-filled); Platforms are whatever's actually
+// present in the data for that Type, sorted alphabetically.
+export function buildTypePlatformBreakdown(deals) {
+  const byType = {};
+  for (const type of STANDARD_TYPES) byType[type] = { byPlatform: {}, donorKeys: new Set(), amount: 0 };
+
+  for (const d of deals) {
+    const type = pick(d, "Type");
+    if (!byType[type]) byType[type] = { byPlatform: {}, donorKeys: new Set(), amount: 0 };
+    const platform = pick(d, "Platform");
+    if (!byType[type].byPlatform[platform]) {
+      byType[type].byPlatform[platform] = { amount: 0, donorKeys: new Set() };
+    }
+    const amt = pickNumber(d, "Amount");
+    byType[type].byPlatform[platform].amount += amt;
+    byType[type].amount += amt;
+    const donorKey = uniqueDonorKey(d);
+    if (donorKey) {
+      byType[type].byPlatform[platform].donorKeys.add(donorKey);
+      byType[type].donorKeys.add(donorKey);
+    }
+  }
+
+  const allTypeNames = new Set([...STANDARD_TYPES, ...Object.keys(byType)]);
+  const types = [...allTypeNames].map((type) => {
+    const info = byType[type] || { byPlatform: {}, donorKeys: new Set(), amount: 0 };
+    const platforms = Object.keys(info.byPlatform).sort();
+    return {
+      type,
+      platforms,
+      byPlatform: Object.fromEntries(
+        platforms.map((p) => [p, { amount: info.byPlatform[p].amount, donors: info.byPlatform[p].donorKeys.size }])
+      ),
+      total: { amount: info.amount, donors: info.donorKeys.size },
+    };
+  });
+  // Keep the 3 standard types first (in their fixed order), any
+  // non-standard Type found in the data tacked on after.
+  types.sort((a, b) => {
+    const ai = STANDARD_TYPES.indexOf(a.type);
+    const bi = STANDARD_TYPES.indexOf(b.type);
+    if (ai === -1 && bi === -1) return a.type.localeCompare(b.type);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+
+  const grandTotalAmount = types.reduce((s, t) => s + t.total.amount, 0);
+  return { types, grandTotalAmount };
+}
+
 export function totalsFor(deals) {
   return {
     amount: deals.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0),
