@@ -191,14 +191,16 @@ function DonorTypeBadge({ value }) {
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
 
 // Categorical columns: checkbox filter only, no sort.
-const FILTERABLE_KEYS = ["fy1Type", "fy2Type", "engaged", "platform", "spoc", "kam", "donorType", "category"];
+const FILTERABLE_KEYS = ["fy1Type", "fy1Month", "fy2Type", "fy2Month", "engaged", "platform", "spoc", "kam", "donorType", "category"];
 // Numeric columns: sort only, no filter.
 const SORTABLE_KEYS = ["fy1Amount", "fy2Amount"];
 
 // How to read each column's comparable value off a row.
 const COLUMN_DEFS = {
   fy1Type: (r) => r.fy1Type || "",
+  fy1Month: (r) => r.fy1Month || "",
   fy2Type: (r) => r.fy2Type || "",
+  fy2Month: (r) => r.fy2Month || "",
   engaged: (r) => (r.engaged ? "Engaged" : "Not Engaged"),
   platform: (r) => r.platform || "",
   spoc: (r) => r.spoc || "",
@@ -480,6 +482,9 @@ export default function EngagementStatusModule() {
     return span;
   };
 
+  // Stripe by donor group (not raw row index) so a merged cell's
+  // background never straddles two different stripe colors.
+
   return (
     <div className="space-y-5">
       <KamComparisonTables fy1={fy1} fy2={fy2} />
@@ -575,11 +580,13 @@ export default function EngagementStatusModule() {
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold text-left align-middle">S.No</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold text-left align-middle">Donor Name</th>
-                <th colSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy1}</th>
-                <th colSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy2}</th>
+                <th colSpan={3} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy1}</th>
+                <th colSpan={3} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy2}</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">Difference</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">Percentage (%)</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">Amount Difference (₹)</th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">Pipeline Amount (₹)</th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">Pipeline Month</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">
                   <ColumnFilterMenu {...filterMenuProps("engaged", "Engagement Status")} />
                 </th>
@@ -606,11 +613,17 @@ export default function EngagementStatusModule() {
                 <th className="px-3 py-2 font-medium align-middle">
                   <ColumnFilterMenu {...filterMenuProps("fy1Type", "Type of Engagement")} />
                 </th>
+                <th className="px-3 py-2 font-medium align-middle">
+                  <ColumnFilterMenu {...filterMenuProps("fy1Month", "Conversion Month")} />
+                </th>
                 <th className="px-3 py-2 font-medium align-middle border-l border-slate-100">
                   <ColumnSortMenu {...sortMenuProps("fy2Amount", "Amount (₹)")} />
                 </th>
                 <th className="px-3 py-2 font-medium align-middle">
                   <ColumnFilterMenu {...filterMenuProps("fy2Type", "Type of Engagement")} />
+                </th>
+                <th className="px-3 py-2 font-medium align-middle">
+                  <ColumnFilterMenu {...filterMenuProps("fy2Month", "Conversion Month")} />
                 </th>
               </tr>
             </thead>
@@ -634,11 +647,17 @@ export default function EngagementStatusModule() {
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
                       {r.fy1Type || <span className="text-slate-300">—</span>}
                     </td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                      {r.fy1Month || <span className="text-slate-300">—</span>}
+                    </td>
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
                       {r.fy2Amount != null ? moneyCr(r.fy2Amount) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
                       {r.fy2Type || <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                      {r.fy2Month || <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center border-l border-slate-100 whitespace-nowrap align-middle">
                       {r.diffAmount != null ? (
@@ -683,6 +702,12 @@ export default function EngagementStatusModule() {
                         <span className="text-slate-300">—</span>
                       )}
                     </td>
+                    <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
+                      {r.pipelineAmount != null ? moneyCr(r.pipelineAmount) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                      {r.pipelineMonth || <span className="text-slate-300">—</span>}
+                    </td>
                     {!isContinuation && (
                       <td rowSpan={span} className="px-3 py-2.5 text-center border-l border-slate-100 align-middle">
                         <EngagementPill engaged={r.engaged} />
@@ -700,7 +725,7 @@ export default function EngagementStatusModule() {
               })}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={15} className="px-3 py-10 text-center text-slate-400 text-xs">
+                  <td colSpan={19} className="px-3 py-10 text-center text-slate-400 text-xs">
                     No donors match the current filters.
                   </td>
                 </tr>

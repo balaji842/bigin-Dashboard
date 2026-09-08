@@ -1,21 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  CartesianGrid,
-} from "recharts";
 import FilterTable from "./FilterTable.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import { moneyCr } from "../lib/format.js";
-
-const PIE_COLORS = ["#e94f8a", "#22316b", "#f172a1", "#2f4086", "#f79cbe", "#0b1230"];
 
 function KpiCard({ label, amount, donors, accent = "pink" }) {
   const theme = { pink: "text-pink-600", navy: "text-navy-700", emerald: "text-emerald-600" }[accent];
@@ -23,16 +9,16 @@ function KpiCard({ label, amount, donors, accent = "pink" }) {
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">{label}</p>
       <p className={`font-display text-2xl font-bold ${theme}`}>{moneyCr(amount)}</p>
-      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} unique donors</p>
+      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} Donors</p>
     </div>
   );
 }
 
 // Clickable per-fiscal-year card — one per year found in the closed
-// deals. Clicking it sets the page's `fy` state (same state the
-// dropdown drives), so the Month-wise table and every breakdown below
-// switches to that year. The currently selected year gets a highlighted
-// border/ring so it's clear which one is active.
+// deals. Clicking it sets the page's `fy` state, so the Month-wise
+// table and By Donor Type cards switch to that year. The currently
+// selected year gets a highlighted border/ring so it's clear which one
+// is active.
 function FYCard({ year, amount, donors, active, onClick }) {
   return (
     <button
@@ -44,7 +30,7 @@ function FYCard({ year, amount, donors, active, onClick }) {
     >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">FY {year}</p>
       <p className={`font-display text-xl font-bold ${active ? "text-pink-600" : "text-navy-700"}`}>{moneyCr(amount)}</p>
-      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} unique donors</p>
+      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} Donors</p>
     </button>
   );
 }
@@ -61,42 +47,34 @@ function MiniStatCard({ name, amount, donors }) {
   );
 }
 
-function CardGroup({ title, rows }) {
+// Cash/Kind/School Engagement multi-select pills — same pattern used on
+// the FY Comparison and Engagement Status pages. `selected: null` means
+// "everything" (nothing excluded); once narrowed, `selected` is the
+// explicit array of what's still on.
+function TypeFilterPills({ options, selected, onToggle }) {
+  if (!options || options.length === 0) return null;
   return (
-    <div>
-      <p className="font-display font-semibold text-navy-900 mb-3 text-sm">{title}</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {rows.map((r) => (
-          <MiniStatCard key={r.name} name={r.name} amount={r.amount} donors={r.donors} />
-        ))}
-        {rows.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+      <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">Type</p>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => {
+          const active = selected == null || selected.includes(opt);
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => onToggle(opt)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                active
+                  ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-transparent shadow-sm"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              {opt}
+            </button>
+          );
+        })}
       </div>
-    </div>
-  );
-}
-
-// Custom tooltip so the KAM bar chart can show donor count alongside
-// amount, since donors isn't the bar's own dataKey.
-function KamTooltip({ active, payload }) {
-  if (!active || !payload || !payload.length) return null;
-  const row = payload[0].payload;
-  return (
-    <div className="bg-white border border-slate-200 rounded-lg shadow-sm px-3 py-2 text-xs">
-      <p className="font-semibold text-navy-900">{row.name}</p>
-      <p className="text-slate-600">{moneyCr(row.amount)}</p>
-      <p className="text-emerald-600 font-semibold">{row.donors} donors</p>
-    </div>
-  );
-}
-
-function PlatformTooltip({ active, payload }) {
-  if (!active || !payload || !payload.length) return null;
-  const row = payload[0].payload;
-  return (
-    <div className="bg-white border border-slate-200 rounded-lg shadow-sm px-3 py-2 text-xs">
-      <p className="font-semibold text-navy-900">{row.name}</p>
-      <p className="text-slate-600">{moneyCr(row.amount)}</p>
-      <p className="text-emerald-600 font-semibold">{row.donors} donors</p>
     </div>
   );
 }
@@ -155,10 +133,36 @@ export default function CRMOverview() {
   const [fy, setFy] = useState("2025-2026");
   const [modalMonth, setModalMonth] = useState(null);
 
+  const [typeOptions, setTypeOptions] = useState([]);
+  const [selectedTypes, setSelectedTypes] = useState(null);
+
+  // Type pill options come from the same filter-options endpoint used
+  // elsewhere in the app, fetched once.
+  useEffect(() => {
+    fetch("/api/crm-analysis/filter-options")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((json) => setTypeOptions(json.types || []))
+      .catch(() => {
+        /* Pills just won't render if this fails — non-fatal. */
+      });
+  }, []);
+
+  const toggleType = (value) => {
+    setSelectedTypes((prev) => {
+      const base = prev == null ? typeOptions : prev;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      if (next.length === 0) return prev; // never allow zero selected
+      if (next.length === typeOptions.length) return null; // back to "everything"
+      return next;
+    });
+  };
+
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/crm-analysis/overview?fy=${encodeURIComponent(fy)}`)
+    const params = new URLSearchParams({ fy });
+    if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    fetch(`/api/crm-analysis/overview?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -166,7 +170,7 @@ export default function CRMOverview() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [fy]);
+  }, [fy, selectedTypes]);
 
   const monthDonors = useMemo(() => {
     if (!data || !modalMonth) return [];
@@ -189,40 +193,46 @@ export default function CRMOverview() {
     );
   }
 
+  // FY 2026-2027 is promoted into the top row alongside the two summary
+  // cards; the remaining fiscal years stay in the grid below. Falls back
+  // to a zeroed placeholder if that year has no closed deals yet.
+  const fy2027 = data.byFiscalYear.find((y) => y.name === "2026-2027") || {
+    name: "2026-2027",
+    amount: 0,
+    donors: 0,
+  };
+  const otherYears = data.byFiscalYear.filter((y) => y.name !== "2026-2027");
+
   return (
     <div className="space-y-5 sm:space-y-6">
-      <div className="flex items-center gap-3">
-        <label className="text-sm text-slate-500">Financial Year:</label>
-        <select
-          value={fy}
-          onChange={(e) => setFy(e.target.value)}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-1.5"
-        >
-          {data.byFiscalYear.map((y) => (
-            <option key={y.name} value={y.name}>{y.name}</option>
-          ))}
-        </select>
-      </div>
+      <TypeFilterPills options={typeOptions} selected={selectedTypes} onToggle={toggleType} />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <KpiCard
-          label="Closed Deals (All Time)"
+          label="Total Conversion FY 2022-2027"
           amount={data.closed.allTime.amount}
           donors={data.closed.allTime.donors}
           accent="emerald"
         />
         <KpiCard
-          label="Standard Pipeline"
-          amount={data.standardPipeline.amount}
-          donors={data.standardPipeline.donors}
+          label="Pipeline 2026-2027"
+          amount={data.pipeline2027Approved.amount}
+          donors={data.pipeline2027Approved.donors}
           accent="navy"
+        />
+        <FYCard
+          year={fy2027.name}
+          amount={fy2027.amount}
+          donors={fy2027.donors}
+          active={fy2027.name === fy}
+          onClick={() => setFy(fy2027.name)}
         />
       </div>
 
       <div>
         <p className="font-display font-semibold text-navy-900 mb-3 text-sm">Closed Deals by Fiscal Year</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {data.byFiscalYear.map((y) => (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {otherYears.map((y) => (
             <FYCard
               key={y.name}
               year={y.name}
@@ -232,7 +242,17 @@ export default function CRMOverview() {
               onClick={() => setFy(y.name)}
             />
           ))}
-          {data.byFiscalYear.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
+          {otherYears.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
+        </div>
+      </div>
+
+      <div>
+        <p className="font-display font-semibold text-navy-900 mb-3 text-sm">By Donor Type</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {data.byDonorType.map((r) => (
+            <MiniStatCard key={r.name} name={r.name} amount={r.amount} donors={r.donors} />
+          ))}
+          {data.byDonorType.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
         </div>
       </div>
 
@@ -274,44 +294,6 @@ export default function CRMOverview() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <CardGroup title="By Type (Cash/Kind/SE)" rows={data.byType} />
-      <CardGroup title="By Donor Type" rows={data.byDonorType} />
-
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-        <p className="font-display font-semibold text-navy-900 mb-4 text-sm">
-          By KAM — Achieved (Target overlay not connected yet)
-        </p>
-        <ResponsiveContainer width="100%" height={Math.max(220, data.byKAM.length * 36)}>
-          <BarChart data={data.byKAM} layout="vertical">
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-            <XAxis type="number" tickFormatter={(v) => `${(v / 10000000).toFixed(0)}Cr`} />
-            <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 11 }} interval={0} />
-            <Tooltip content={<KamTooltip />} />
-            <Bar dataKey="amount" fill="#22316b" radius={[0, 6, 6, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-        <p className="font-display font-semibold text-navy-900 mb-4 text-sm">By Platform</p>
-        <ResponsiveContainer width="100%" height={300}>
-          <PieChart>
-            <Pie
-              data={data.byPlatform}
-              dataKey="amount"
-              nameKey="name"
-              outerRadius={100}
-              label={(d) => `${d.name}: ${d.donors} donors`}
-            >
-              {data.byPlatform.map((_, i) => (
-                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip content={<PlatformTooltip />} />
-          </PieChart>
-        </ResponsiveContainer>
       </div>
 
       <FilterTable columns={TABLE_COLUMNS} rows={data.table} />

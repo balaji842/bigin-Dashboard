@@ -27,6 +27,24 @@ export function isClosed(deal) {
   return !isStandardPipeline(deal);
 }
 
+// Handles Bigin's inconsistent representations for a Yes/No or checkbox
+// field: a real boolean true, or a string/picklist like "Yes"/"Approved"
+// (case-insensitive). Anything else (No, Pending, blank, false) counts
+// as not approved.
+export function isApprovedByRajesh(deal) {
+  const raw = deal.Approved_by_Rajesh;
+  if (raw === true) return true;
+  if (typeof raw === "string") {
+    const v = raw.trim().toLowerCase();
+    return v === "yes" || v === "true" || v === "approved";
+  }
+  if (raw && typeof raw === "object") {
+    const v = String(raw.name || raw.value || "").trim().toLowerCase();
+    return v === "yes" || v === "true" || v === "approved";
+  }
+  return false;
+}
+
 // Distinct donor count by Account_Name. Uses the lookup's id when present
 // (more reliable than name, which can have casing/whitespace variants),
 // falling back to the stringified name.
@@ -291,7 +309,7 @@ export function buildMonthDonorBreakdown(deals, fy1, fy2, month) {
 // same donor+type did in fy2. "Engaged" means the donor has ANY closed
 // deal in fy2 (any type) — a donor can be "Engaged" overall while still
 // showing "-" on a specific type row they didn't repeat.
-export function buildEngagementComparison(deals, fy1, fy2) {
+export function buildEngagementComparison(deals, standardDeals, fy1, fy2) {
   const byDonor = {}; // donorKey -> { account, byFY: { [fy]: { [type]: {amount, kam, platform, spoc, donorType} } } }
 
   for (const d of deals) {
@@ -313,18 +331,43 @@ export function buildEngagementComparison(deals, fy1, fy2) {
     bucket.spoc = pick(d, "Spoc");
     bucket.donorType = pick(d, "Type_of_donor");
     bucket.category = pick(d, "Category");
+    // Last deal's closing month wins too, same "most recent" proxy as
+    // kam/platform/spoc/donorType above.
+    bucket.month = monthNameOf(d.Closing_Date);
+  }
+
+  // Open/Standard Pipeline deals for the current fiscal year (fy2),
+  // keyed by donor + Type — lets each row also show what's still
+  // forecasted for that same donor+type combo, alongside their closed
+  // history. Expected_Conversion_Month is a picklist, not a date, so
+  // it's collected as text (joined if a donor has more than one
+  // expected month for the same type) rather than parsed as a Date.
+  const pipelineByDonorType = {};
+  for (const d of standardDeals) {
+    if (pick(d, "Fiscal_year", "") !== fy2) continue;
+    const key = uniqueDonorKey(d);
+    if (!key) continue;
+    const type = pick(d, "Type");
+    if (!pipelineByDonorType[key]) pipelineByDonorType[key] = {};
+    if (!pipelineByDonorType[key][type]) {
+      pipelineByDonorType[key][type] = { amount: 0, months: new Set() };
+    }
+    pipelineByDonorType[key][type].amount += pickNumber(d, "Amount");
+    const expectedMonth = pick(d, "Expected_Conversion_Month", null);
+    if (expectedMonth) pipelineByDonorType[key][type].months.add(expectedMonth);
   }
 
   const rows = [];
-  for (const info of Object.values(byDonor)) {
+  for (const [donorKey, info] of Object.entries(byDonor)) {
     const fy1Types = info.byFY[fy1] || {};
     const fy2Types = info.byFY[fy2] || {};
     if (Object.keys(fy1Types).length === 0) continue; // base = donors active in fy1
 
     const engaged = Object.keys(fy2Types).length > 0;
     const rep = Object.values(fy2Types)[0] || Object.values(fy1Types)[0];
+    const pipelineForDonor = pipelineByDonorType[donorKey] || {};
 
-    const allTypes = new Set([...Object.keys(fy1Types), ...Object.keys(fy2Types)]);
+    const allTypes = new Set([...Object.keys(fy1Types), ...Object.keys(fy2Types), ...Object.keys(pipelineForDonor)]);
     for (const type of allTypes) {
       const a1 = fy1Types[type];
       const a2 = fy2Types[type];
@@ -336,16 +379,21 @@ export function buildEngagementComparison(deals, fy1, fy2) {
         diffAmount = fy2Amount - fy1Amount;
         diffPct = fy1Amount > 0 ? (diffAmount / fy1Amount) * 100 : fy2Amount > 0 ? 100 : 0;
       }
+      const pipeline = pipelineForDonor[type];
       rows.push({
         account: info.account,
         fy1Amount,
         fy1Type: fy1Amount != null ? type : null,
+        fy1Month: a1 ? a1.month : null,
         fy2Amount,
         fy2Type: fy2Amount != null ? type : null,
+        fy2Month: a2 ? a2.month : null,
         diffAmount,
         absDiffAmount: diffAmount != null ? Math.abs(diffAmount) : null,
         diffPct,
         engaged,
+        pipelineAmount: pipeline ? pipeline.amount : null,
+        pipelineMonth: pipeline && pipeline.months.size > 0 ? [...pipeline.months].join(", ") : null,
         platform: rep.platform,
         spoc: rep.spoc,
         kam: rep.kam,

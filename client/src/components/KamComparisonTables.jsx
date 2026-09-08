@@ -161,8 +161,10 @@ function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChang
                 </th>
               ))}
               <th className={`${CELL} bg-slate-100 font-bold text-navy-900 align-middle`}>Total</th>
-            </tr>
-            <TargetRow typeLayout={typeLayout} targets={targets} onChange={onTargetChange} onBlur={onTargetBlur} />
+</tr>
+{mode === "current" && (
+  <TargetRow typeLayout={typeLayout} targets={targets} onChange={onTargetChange} onBlur={onTargetBlur} />
+)}
             <tr>
               <th className={`${CELL} text-left bg-slate-50 font-semibold text-slate-500`}>Platform</th>
               {typeLayout.map(({ type, platforms }) => (

@@ -18,6 +18,7 @@ import {
   buildEngagementComparison,
   buildTypePlatformBreakdown,
   STANDARD_TYPES,
+  isApprovedByRajesh,
 } from "../lib/dealHelpers.js";
 import { getTargetsFor, setTarget } from "../lib/targetsStore.js";
 
@@ -65,17 +66,29 @@ router.get("/crm-analysis/filter-options", async (_req, res) => {
   }
 });
 
-// GET /api/crm-analysis/overview?fy=2025-2026
+// GET /api/crm-analysis/overview?fy=2025-2026&types=Cash,Kind
 router.get("/crm-analysis/overview", async (req, res) => {
   const currentFY = req.query.fy || "2025-2026";
+  const selectedTypes = parseListParam(req.query.types);
 
   try {
     const deals = await fetchAllRecords("Pipelines");
 
-    const closedDeals = deals.filter(isClosed);
-    const standardDeals = deals.filter(isStandardPipeline);
+    let filteredDeals = deals;
+    if (selectedTypes && selectedTypes.length > 0) {
+      filteredDeals = filteredDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
+
+    const closedDeals = filteredDeals.filter(isClosed);
+    const standardDeals = filteredDeals.filter(isStandardPipeline);
     const closedThisFY = closedDeals.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
+    );
+
+    // Pipeline 2026-2027 card is scoped to that specific fiscal year AND
+    // only deals Rajesh has actually approved — not every open deal.
+    const pipeline2027Approved = standardDeals.filter(
+      (d) => pick(d, "Fiscal_year", "") === "2026-2027" && isApprovedByRajesh(d)
     );
 
     res.json({
@@ -84,7 +97,7 @@ router.get("/crm-analysis/overview", async (req, res) => {
         allTime: totalsFor(closedDeals),
         thisFY: totalsFor(closedThisFY),
       },
-      standardPipeline: totalsFor(standardDeals),
+      pipeline2027Approved: totalsFor(pipeline2027Approved),
 
       // Totals per fiscal year found in the closed deals — powers the
       // clickable FY cards on the Overview page. "Unspecified" (deals
@@ -97,14 +110,11 @@ router.get("/crm-analysis/overview", async (req, res) => {
 
       monthWise: monthWiseSummary(closedThisFY, "Closing_Date"),
 
-      byType: groupSummary(closedThisFY, "Type"),
       byDonorType: groupSummary(closedThisFY, "Type_of_donor"),
-      byKAM: groupSummary(closedThisFY, "Pipeline_KAM"),
-      byPlatform: groupSummary(closedThisFY, "Platform"),
 
       // Raw rows for the filterable table at the bottom of the module.
       // Kept lean — just what the table needs to display + filter on.
-      table: deals.map((d) => ({
+      table: filteredDeals.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
         amount: Number(d.Amount) || 0,
@@ -511,7 +521,8 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
   try {
     const deals = await fetchAllRecords("Pipelines");
     const closedDeals = deals.filter(isClosed);
-    const rows = buildEngagementComparison(closedDeals, fy1, fy2);
+    const standardDeals = deals.filter(isStandardPipeline);
+    const rows = buildEngagementComparison(closedDeals, standardDeals, fy1, fy2);
 
     res.json({
       fy1,
