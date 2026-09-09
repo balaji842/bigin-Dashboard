@@ -8,7 +8,8 @@ import ClosedDealsModule from "./components/ClosedDealsModule.jsx";
 import StandardPipelineModule from "./components/StandardPipelineModule.jsx";
 import FYComparisonModule from "./components/FYComparisonModule.jsx";
 import EngagementStatusModule from "./components/EngagementStatusModule.jsx";
-import LoginGate, { isUnlocked } from "./components/LoginGate.jsx"; // NEW
+import LoginGate, { isUnlocked } from "./components/LoginGate.jsx";
+import AIChatbot from "./components/AIChatbot.jsx";
 
 const PAGE_TITLES = {
   "closed-deals": {
@@ -127,12 +128,18 @@ export default function App() {
           {activePage === "closed-deals" && <ClosedDealsModule />}
         </main>
 
-        <footer className="border-t border-slate-200 px-4 sm:px-6 md:px-8 py-3 max-w-6xl mx-auto w-full flex flex-col sm:flex-row gap-1 sm:gap-0 items-start sm:items-center justify-between text-xs text-slate-400">
-          <span>{lastUpdated ? `Last updated: ${lastUpdated}` : "Not yet loaded"}</span>
+                <footer className="border-t border-slate-200 px-4 sm:px-6 md:px-8 py-3 max-w-6xl mx-auto w-full flex flex-col sm:flex-row gap-1 sm:gap-0 items-start sm:items-center justify-between text-xs text-slate-400">
+          <span>
+            {lastUpdated ? `Last updated: ${lastUpdated}` : "Not yet loaded"}
+          </span>
+
           <span>NSNOP Bigin Analysis Dashboard</span>
         </footer>
       </div>
-      </div> {/* NEW closing */}
+      </div>
+
+      {unlocked && <AIChatbot />}
+
     </div>
   );
 }

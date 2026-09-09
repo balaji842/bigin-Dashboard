@@ -8,7 +8,8 @@ import modulesRouter from "./routes/modules.js";
 import analyticsRouter from "./routes/analytics.js";
 import crmAnalysisRouter from "./routes/crmAnalysis.js";
 import authRouter from "./routes/auth.js";
-
+import aiRouter from "./routes/ai.js";
+import ollama from "ollama";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -24,6 +25,7 @@ app.use("/api", authRouter);
 app.use("/api", modulesRouter);
 app.use("/api", analyticsRouter);
 app.use("/api", crmAnalysisRouter);
+app.use("/api", aiRouter);
 
 // Serve the built React app (client/dist), produced by `npm run build`
 // in the client folder as part of the Render build step.
@@ -44,3 +46,5 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`Bigin dashboard running at http://localhost:${PORT}`);
 });
+ollama.chat({ model: "llama3.2", messages: [{ role: "user", content: "hi" }], keep_alive: "30m" })
+  .catch(() => {}); // warm up the model in the background, ignore result
