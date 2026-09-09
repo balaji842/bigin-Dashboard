@@ -8,24 +8,25 @@ import ClosedDealsModule from "./components/ClosedDealsModule.jsx";
 import StandardPipelineModule from "./components/StandardPipelineModule.jsx";
 import FYComparisonModule from "./components/FYComparisonModule.jsx";
 import EngagementStatusModule from "./components/EngagementStatusModule.jsx";
+import LoginGate, { isUnlocked } from "./components/LoginGate.jsx"; // NEW
 
 const PAGE_TITLES = {
   "closed-deals": {
-  title: "Closed Deals · Conversion",
-  sub: "Fiscal-year conversion totals, month-wise trend, and donor breakdowns for closed deals.",
-},
-"standard-pipeline": {
-  title: "Standard Pipeline",
-  sub: "Open pipeline by stage, projected conversion month, and donor breakdowns.",
-},
-"fy-comparison": {
-  title: "FY 2025-26 vs FY 2026-27",
-  sub: "Side-by-side comparison of closed deals and standard pipeline across both fiscal years.",
-},
-"engagement-status": {
-  title: "Engagement Status",
-  sub: "Donor-wise retention comparison: who gave in FY 2025-26, and whether they're still engaged in FY 2026-27.",
-},
+    title: "Closed Deals · Conversion",
+    sub: "Fiscal-year conversion totals, month-wise trend, and donor breakdowns for closed deals.",
+  },
+  "standard-pipeline": {
+    title: "Standard Pipeline",
+    sub: "Open pipeline by stage, projected conversion month, and donor breakdowns.",
+  },
+  "fy-comparison": {
+    title: "FY 2025-26 vs FY 2026-27",
+    sub: "Side-by-side comparison of closed deals and standard pipeline across both fiscal years.",
+  },
+  "engagement-status": {
+    title: "Engagement Status",
+    sub: "Donor-wise retention comparison: who gave in FY 2025-26, and whether they're still engaged in FY 2026-27.",
+  },
   "bigin-overview": {
     title: "Bigin CRM · Live Analysis Dashboard",
     sub: "Every view here calls the Zoho Bigin API in real time — nothing is cached beyond this session.",
@@ -36,7 +37,6 @@ const PAGE_TITLES = {
   },
 };
 
-
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +44,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activePage, setActivePage] = useState("bigin-overview");
+  const [unlocked, setUnlocked] = useState(isUnlocked()); // NEW
 
   const loadSummary = () => {
     setLoading(true);
@@ -66,6 +67,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-slate-50">
+      {!unlocked && <LoginGate onUnlock={() => setUnlocked(true)} />} {/* NEW */}
+      <div className={`flex w-full ${!unlocked ? "blur-sm pointer-events-none select-none" : ""}`}> {/* NEW wrapper */}
       <Sidebar
         lastUpdated={lastUpdated}
         onRefresh={loadSummary}
@@ -129,6 +132,7 @@ export default function App() {
           <span>NSNOP Bigin Analysis Dashboard</span>
         </footer>
       </div>
+      </div> {/* NEW closing */}
     </div>
   );
 }

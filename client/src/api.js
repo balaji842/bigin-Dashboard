@@ -1,4 +1,6 @@
-const BASE = "/api";
+const BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : "/api";
 
 async function handle(res) {
   if (!res.ok) {
@@ -9,6 +11,12 @@ async function handle(res) {
 }
 
 export const api = {
+  login: (password) =>
+    fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    }).then(handle),
   summary: () => fetch(`${BASE}/analytics/summary`).then(handle),
   moduleRecords: (module) => fetch(`${BASE}/modules/${module}`).then(handle),
   coql: (select_query) =>

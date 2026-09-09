@@ -5,6 +5,7 @@ import "dotenv/config";
 import modulesRouter from "./routes/modules.js";
 import analyticsRouter from "./routes/analytics.js";
 import crmAnalysisRouter from "./routes/crmAnalysis.js";
+import authRouter from "./routes/auth.js";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -14,6 +15,7 @@ app.use(express.json());
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+app.use("/api", authRouter);
 app.use("/api", modulesRouter);
 app.use("/api", analyticsRouter);
 app.use("/api", crmAnalysisRouter);
