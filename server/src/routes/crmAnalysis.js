@@ -114,7 +114,7 @@ router.get("/crm-analysis/overview", async (req, res) => {
 
       // Raw rows for the filterable table at the bottom of the module.
       // Kept lean — just what the table needs to display + filter on.
-      table: filteredDeals.map((d) => ({
+            table: filteredDeals.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
         amount: Number(d.Amount) || 0,
@@ -127,6 +127,11 @@ router.get("/crm-analysis/overview", async (req, res) => {
         spoc: pick(d, "Spoc"),
         fiscalYear: pick(d, "Fiscal_year"),
         closingDate: d.Closing_Date || null,
+        // Standard Pipeline deals aren't closed yet, so they have no
+        // Closing_Date — but Expected_Conversion_Month (a picklist, not a
+        // date) gives the donor drilldown modal something to show in a
+        // "Pipeline Month" column for those still-open deals.
+        expectedMonth: pick(d, "Expected_Conversion_Month", null),
         approved: pick(d, "Approved_by_Rajesh"),
       })),
 

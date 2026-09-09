@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import FilterTable from "./FilterTable.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
+import DonorHistoryTable from "./DonorHistoryTable.jsx";
+import DonorHistoryModal from "./DonorHistoryModal.jsx";
 import { moneyCr } from "../lib/format.js";
 
 function KpiCard({ label, amount, donors, accent = "pink" }) {
@@ -14,11 +15,6 @@ function KpiCard({ label, amount, donors, accent = "pink" }) {
   );
 }
 
-// Clickable per-fiscal-year card — one per year found in the closed
-// deals. Clicking it sets the page's `fy` state, so the Month-wise
-// table and By Donor Type cards switch to that year. The currently
-// selected year gets a highlighted border/ring so it's clear which one
-// is active.
 function FYCard({ year, amount, donors, active, onClick }) {
   return (
     <button
@@ -47,10 +43,6 @@ function MiniStatCard({ name, amount, donors }) {
   );
 }
 
-// Cash/Kind/School Engagement multi-select pills — same pattern used on
-// the FY Comparison and Engagement Status pages. `selected: null` means
-// "everything" (nothing excluded); once narrowed, `selected` is the
-// explicit array of what's still on.
 function TypeFilterPills({ options, selected, onToggle }) {
   if (!options || options.length === 0) return null;
   return (
@@ -79,29 +71,52 @@ function TypeFilterPills({ options, selected, onToggle }) {
   );
 }
 
-const TABLE_COLUMNS = [
-  { key: "dealName", label: "Deal" },
-  { key: "account", label: "Account" },
-  { key: "amount", label: "Amount", format: moneyCr },
-  { key: "subPipeline", label: "Sub-Pipeline" },
-  { key: "stage", label: "Stage" },
-  { key: "type", label: "Type" },
-  { key: "donorType", label: "Donor Type" },
-  { key: "kam", label: "KAM" },
-  { key: "platform", label: "Platform" },
-  { key: "spoc", label: "SPOC" },
-  { key: "fiscalYear", label: "FY" },
-  { key: "approved", label: "Approval Status" },
-];
+// Collapses the raw per-deal table into one row per donor (Account_Name)
+// for the Donor History table: total amount across every deal, plus the
+// distinct Donor Type(s)/KAM(s)/SPOC(s) that appear across that donor's
+// deals — joined with ", " when a donor has more than one of any of
+// these. Each donor's full list of underlying deals is kept as `deals`
+// so the drilldown modal can show fiscal-year splits, months, and
+// per-deal engagement type without a second network call.
+function buildDonorHistory(table) {
+  const byAccount = {};
+  for (const row of table) {
+    if (!row.account || row.account === "Unspecified") continue;
+    if (!byAccount[row.account]) {
+      byAccount[row.account] = {
+        account: row.account,
+        totalAmount: 0,
+        donorTypes: new Set(),
+        kams: new Set(),
+        spocs: new Set(),
+        deals: [],
+      };
+    }
+    const entry = byAccount[row.account];
+    entry.totalAmount += row.amount || 0;
+    if (row.donorType && row.donorType !== "Unspecified") entry.donorTypes.add(row.donorType);
+    if (row.kam && row.kam !== "Unspecified") entry.kams.add(row.kam);
+    if (row.spoc && row.spoc !== "Unspecified") entry.spocs.add(row.spoc);
+    entry.deals.push(row);
+  }
+
+  return Object.values(byAccount)
+    .map((d) => ({
+      account: d.account,
+      totalAmount: d.totalAmount,
+      donorType: [...d.donorTypes].join(", ") || "—",
+      kam: [...d.kams].join(", ") || "—",
+      spoc: [...d.spocs].join(", ") || "—",
+      deals: d.deals,
+    }))
+    .sort((a, b) => b.totalAmount - a.totalAmount);
+}
 
 function monthNameOf(closingDate) {
   const d = new Date(closingDate);
   return isNaN(d) ? null : d.toLocaleString("en-US", { month: "long" });
 }
 
-// Builds the donor list for a clicked month, plus each donor's giving
-// history in other fiscal years — all from the raw table already loaded,
-// no extra network call needed.
 function buildMonthDonors(table, monthName, fy) {
   const rowsThisMonth = table.filter(
     (r) =>
@@ -132,27 +147,24 @@ export default function CRMOverview() {
   const [error, setError] = useState(null);
   const [fy, setFy] = useState("2025-2026");
   const [modalMonth, setModalMonth] = useState(null);
+  const [modalDonor, setModalDonor] = useState(null);
 
   const [typeOptions, setTypeOptions] = useState([]);
   const [selectedTypes, setSelectedTypes] = useState(null);
 
-  // Type pill options come from the same filter-options endpoint used
-  // elsewhere in the app, fetched once.
   useEffect(() => {
     fetch("/api/crm-analysis/filter-options")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((json) => setTypeOptions(json.types || []))
-      .catch(() => {
-        /* Pills just won't render if this fails — non-fatal. */
-      });
+      .catch(() => {});
   }, []);
 
   const toggleType = (value) => {
     setSelectedTypes((prev) => {
       const base = prev == null ? typeOptions : prev;
       const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
-      if (next.length === 0) return prev; // never allow zero selected
-      if (next.length === typeOptions.length) return null; // back to "everything"
+      if (next.length === 0) return prev;
+      if (next.length === typeOptions.length) return null;
       return next;
     });
   };
@@ -177,6 +189,15 @@ export default function CRMOverview() {
     return buildMonthDonors(data.table, modalMonth, data.fy);
   }, [data, modalMonth]);
 
+  // Donor History table aggregates across the FULL raw table (every
+  // fiscal year, closed + standard pipeline) — not scoped to the
+  // currently-selected `fy`, since the point of this table is to search
+  // any donor's entire history regardless of which year is picked above.
+  const donorHistory = useMemo(() => {
+    if (!data) return [];
+    return buildDonorHistory(data.table);
+  }, [data]);
+
   if (loading && !data) {
     return (
       <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
@@ -193,9 +214,6 @@ export default function CRMOverview() {
     );
   }
 
-  // FY 2026-2027 is promoted into the top row alongside the two summary
-  // cards; the remaining fiscal years stay in the grid below. Falls back
-  // to a zeroed placeholder if that year has no closed deals yet.
   const fy2027 = data.byFiscalYear.find((y) => y.name === "2026-2027") || {
     name: "2026-2027",
     amount: 0,
@@ -296,7 +314,7 @@ export default function CRMOverview() {
         </div>
       </div>
 
-      <FilterTable columns={TABLE_COLUMNS} rows={data.table} />
+      <DonorHistoryTable donors={donorHistory} onSelectDonor={setModalDonor} />
 
       <DonorDrilldownModal
         open={!!modalMonth}
@@ -304,6 +322,12 @@ export default function CRMOverview() {
         monthName={modalMonth}
         fy={data.fy}
         donors={monthDonors}
+      />
+
+      <DonorHistoryModal
+        open={!!modalDonor}
+        onClose={() => setModalDonor(null)}
+        donor={modalDonor}
       />
     </div>
   );
