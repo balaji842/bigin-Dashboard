@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import Sidebar from "./components/Sidebar.jsx";
-import Overview from "./components/Overview.jsx";
 import CRMOverview from "./components/CRMOverview.jsx";
 import { IconMenu } from "./components/icons.jsx";
 import { api } from "./api.js";
@@ -28,10 +27,6 @@ const PAGE_TITLES = {
     title: "Engagement Status",
     sub: "Donor-wise retention comparison: who gave in FY 2025-26, and whether they're still engaged in FY 2026-27.",
   },
-  "bigin-overview": {
-    title: "Bigin CRM · Live Analysis Dashboard",
-    sub: "Every view here calls the Zoho Bigin API in real time — nothing is cached beyond this session.",
-  },
   "crm-overview": {
     title: "CRM Analysis · Overview",
     sub: "Closed deals, standard pipeline, and donor breakdowns pulled fresh from Bigin.",
@@ -44,8 +39,8 @@ export default function App() {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activePage, setActivePage] = useState("bigin-overview");
-  const [unlocked, setUnlocked] = useState(isUnlocked()); // NEW
+  const [activePage, setActivePage] = useState("crm-overview");
+  const [unlocked, setUnlocked] = useState(isUnlocked());
 
   const loadSummary = () => {
     setLoading(true);
@@ -64,12 +59,12 @@ export default function App() {
     loadSummary();
   }, []);
 
-  const pageInfo = PAGE_TITLES[activePage] || PAGE_TITLES["bigin-overview"];
+  const pageInfo = PAGE_TITLES[activePage] || PAGE_TITLES["crm-overview"];
 
   return (
     <div className="flex min-h-screen bg-slate-50">
-      {!unlocked && <LoginGate onUnlock={() => setUnlocked(true)} />} {/* NEW */}
-      <div className={`flex w-full ${!unlocked ? "blur-sm pointer-events-none select-none" : ""}`}> {/* NEW wrapper */}
+      {!unlocked && <LoginGate onUnlock={() => setUnlocked(true)} />}
+      <div className={`flex w-full ${!unlocked ? "blur-sm pointer-events-none select-none" : ""}`}>
       <Sidebar
         lastUpdated={lastUpdated}
         onRefresh={loadSummary}
@@ -103,24 +98,6 @@ export default function App() {
             <p className="text-sm text-slate-500">{pageInfo.sub}</p>
           </header>
 
-          {activePage === "bigin-overview" && (
-            <>
-              {error && (
-                <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100 mb-5 break-words">
-                  Couldn't load summary: {error}. Check your server/.env
-                  credentials and that the API server is running on port 4000.
-                </div>
-              )}
-              {loading && !summary ? (
-                <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
-                  Pulling live data from Bigin…
-                </div>
-              ) : (
-                <Overview data={summary} />
-              )}
-            </>
-          )}
-
           {activePage === "crm-overview" && <CRMOverview />}
           {activePage === "standard-pipeline" && <StandardPipelineModule />}
           {activePage === "fy-comparison" && <FYComparisonModule />}
@@ -128,7 +105,7 @@ export default function App() {
           {activePage === "closed-deals" && <ClosedDealsModule />}
         </main>
 
-                <footer className="border-t border-slate-200 px-4 sm:px-6 md:px-8 py-3 max-w-6xl mx-auto w-full flex flex-col sm:flex-row gap-1 sm:gap-0 items-start sm:items-center justify-between text-xs text-slate-400">
+        <footer className="border-t border-slate-200 px-4 sm:px-6 md:px-8 py-3 max-w-6xl mx-auto w-full flex flex-col sm:flex-row gap-1 sm:gap-0 items-start sm:items-center justify-between text-xs text-slate-400">
           <span>
             {lastUpdated ? `Last updated: ${lastUpdated}` : "Not yet loaded"}
           </span>
@@ -142,4 +119,4 @@ export default function App() {
 
     </div>
   );
-}
+} 

@@ -4,14 +4,24 @@ import DonorHistoryTable from "./DonorHistoryTable.jsx";
 import DonorHistoryModal from "./DonorHistoryModal.jsx";
 import { moneyCr } from "../lib/format.js";
 
-function KpiCard({ label, amount, donors, accent = "pink" }) {
+function KpiCard({ label, amount, donors, accent = "pink", active, onClick }) {
   const theme = { pink: "text-pink-600", navy: "text-navy-700", emerald: "text-emerald-600" }[accent];
+  const clickable = typeof onClick === "function";
+  const Tag = clickable ? "button" : "div";
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+    <Tag
+      type={clickable ? "button" : undefined}
+      onClick={onClick}
+      className={`text-left rounded-2xl border shadow-sm p-5 transition-colors w-full ${
+        active
+          ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200"
+          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200" : "")
+      }`}
+    >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">{label}</p>
-      <p className={`font-display text-2xl font-bold ${theme}`}>{moneyCr(amount)}</p>
+      <p className={`font-display text-2xl font-bold ${active ? "text-pink-600" : theme}`}>{moneyCr(amount)}</p>
       <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} Donors</p>
-    </div>
+    </Tag>
   );
 }
 
@@ -117,13 +127,17 @@ function monthNameOf(closingDate) {
   return isNaN(d) ? null : d.toLocaleString("en-US", { month: "long" });
 }
 
+// fy can be "ALL" here too — in that case donors aren't scoped to a
+// single fiscal year for the clicked month, and the "history" list for
+// each donor excludes only that exact deal (by reference) rather than
+// excluding "the currently selected FY".
 function buildMonthDonors(table, monthName, fy) {
   const rowsThisMonth = table.filter(
     (r) =>
       r.subPipeline !== "Standard Pipeline" &&
-      r.fiscalYear === fy &&
       r.closingDate &&
-      monthNameOf(r.closingDate) === monthName
+      monthNameOf(r.closingDate) === monthName &&
+      (fy === "ALL" || r.fiscalYear === fy)
   );
 
   return rowsThisMonth.map((r) => {
@@ -131,9 +145,9 @@ function buildMonthDonors(table, monthName, fy) {
       .filter(
         (h) =>
           h.account === r.account &&
-          h.fiscalYear !== fy &&
           h.subPipeline !== "Standard Pipeline" &&
-          h.closingDate
+          h.closingDate &&
+          (fy === "ALL" ? h !== r : h.fiscalYear !== fy)
       )
       .map((h) => ({ fiscalYear: h.fiscalYear, amount: h.amount, month: monthNameOf(h.closingDate) }))
       .sort((a, b) => (b.fiscalYear || "").localeCompare(a.fiscalYear || ""));
@@ -145,7 +159,7 @@ export default function CRMOverview() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [fy, setFy] = useState("2025-2026");
+  const [fy, setFy] = useState("ALL");
   const [modalMonth, setModalMonth] = useState(null);
   const [modalDonor, setModalDonor] = useState(null);
 
@@ -231,6 +245,8 @@ export default function CRMOverview() {
           amount={data.closed.allTime.amount}
           donors={data.closed.allTime.donors}
           accent="emerald"
+          active={fy === "ALL"}
+          onClick={() => setFy("ALL")}
         />
         <KpiCard
           label="Pipeline 2026-2027"
@@ -265,7 +281,10 @@ export default function CRMOverview() {
       </div>
 
       <div>
-        <p className="font-display font-semibold text-navy-900 mb-3 text-sm">By Donor Type</p>
+        <p className="font-display font-semibold text-navy-900 text-sm">By Donor Type</p>
+        <p className="text-xs text-slate-400 mb-3">
+          {data.fy === "ALL" ? "Across all fiscal years (2022-2027)" : `FY ${data.fy}`}
+        </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {data.byDonorType.map((r) => (
             <MiniStatCard key={r.name} name={r.name} amount={r.amount} donors={r.donors} />
@@ -277,7 +296,9 @@ export default function CRMOverview() {
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="bg-navy-900 text-white px-5 py-3">
           <p className="font-display font-semibold text-sm">
-            Month-wise (FY {data.fy}) — April to March
+            {data.fy === "ALL"
+              ? "Month-wise (All Fiscal Years, 2022-2027 combined)"
+              : `Month-wise (FY ${data.fy}) — April to March`}
           </p>
         </div>
         <div className="overflow-x-auto">

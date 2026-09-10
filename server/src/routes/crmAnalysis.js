@@ -65,10 +65,11 @@ router.get("/crm-analysis/filter-options", async (_req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
-
 // GET /api/crm-analysis/overview?fy=2025-2026&types=Cash,Kind
+// fy can also be "ALL", meaning "every fiscal year combined" — used by the
+// clickable "Total Conversion FY 2022-2027" card on the Overview page.
 router.get("/crm-analysis/overview", async (req, res) => {
-  const currentFY = req.query.fy || "2025-2026";
+  const currentFY = req.query.fy || "ALL";
   const selectedTypes = parseListParam(req.query.types);
 
   try {
@@ -81,15 +82,23 @@ router.get("/crm-analysis/overview", async (req, res) => {
 
     const closedDeals = filteredDeals.filter(isClosed);
     const standardDeals = filteredDeals.filter(isStandardPipeline);
-    const closedThisFY = closedDeals.filter(
-      (d) => pick(d, "Fiscal_year", "") === currentFY
-    );
 
-    // Pipeline 2026-2027 card is scoped to that specific fiscal year AND
-    // only deals Rajesh has actually approved — not every open deal.
-    const pipeline2027Approved = standardDeals.filter(
-      (d) => pick(d, "Fiscal_year", "") === "2026-2027" && isApprovedByRajesh(d)
-    );
+    // "ALL" scopes Month-wise / By Donor Type to every closed deal across
+    // every fiscal year, instead of narrowing to a single selected FY.
+    const closedThisFY =
+      currentFY === "ALL"
+        ? closedDeals
+        : closedDeals.filter((d) => pick(d, "Fiscal_year", "") === currentFY);
+
+    const pipeline2027Approved = standardDeals.filter((d) => {
+      const stage = pick(d, "Stage", "").toLowerCase();
+      return (
+        pick(d, "Fiscal_year", "") === "2026-2027" &&
+        isApprovedByRajesh(d) &&
+        !stage.includes("lost") &&
+        !stage.includes("on hold")
+      );
+    });
 
     res.json({
       fy: currentFY,
@@ -108,13 +117,15 @@ router.get("/crm-analysis/overview", async (req, res) => {
         .filter((r) => r.name !== "Unspecified")
         .sort((a, b) => a.name.localeCompare(b.name)),
 
+      // Both of these now follow whichever scope is selected (one FY, or
+      // "ALL" for everything combined) via closedThisFY above.
       monthWise: monthWiseSummary(closedThisFY, "Closing_Date"),
 
       byDonorType: groupSummary(closedThisFY, "Type_of_donor"),
 
       // Raw rows for the filterable table at the bottom of the module.
       // Kept lean — just what the table needs to display + filter on.
-            table: filteredDeals.map((d) => ({
+      table: filteredDeals.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
         amount: Number(d.Amount) || 0,
@@ -127,10 +138,6 @@ router.get("/crm-analysis/overview", async (req, res) => {
         spoc: pick(d, "Spoc"),
         fiscalYear: pick(d, "Fiscal_year"),
         closingDate: d.Closing_Date || null,
-        // Standard Pipeline deals aren't closed yet, so they have no
-        // Closing_Date — but Expected_Conversion_Month (a picklist, not a
-        // date) gives the donor drilldown modal something to show in a
-        // "Pipeline Month" column for those still-open deals.
         expectedMonth: pick(d, "Expected_Conversion_Month", null),
         approved: pick(d, "Approved_by_Rajesh"),
       })),
