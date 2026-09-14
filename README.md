@@ -1,6 +1,6 @@
 # Bigin CRM Analysis Dashboard
 
-Live, read-only analytics dashboard for your NSNOP Bigin CRM — Deals,
+Live, read-only analytics dashboard for your NSNOP Bigin CRM — donors,
 Accounts, Contacts, Tasks, Calls, and Meetings — plus a COQL explorer for
 ad-hoc queries. Every screen calls the Bigin API in real time; nothing is
 stored in a database.
@@ -111,10 +111,10 @@ to be running.
 
 ## What's included
 
-- **Overview** — stat cards + charts (deals by stage, deal value by stage,
+- **Overview** — stat cards + charts (donors by stage, deal value by stage,
   accounts by industry, activity mix), all computed live from fresh API
   pulls on every refresh
-- **Deals / Accounts / Contacts** — searchable, paginated live tables
+- **donors / Accounts / Contacts** — searchable, paginated live tables
 - **Activities** — Tasks / Calls / Meetings in sub-tabs
 - **COQL Explorer** — run any read-only COQL query and see it rendered as a
   table, same query language you already use for audits

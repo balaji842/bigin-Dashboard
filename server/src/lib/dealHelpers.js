@@ -54,20 +54,20 @@ export function uniqueDonorKey(deal) {
   return raw || null;
 }
 
-export function uniqueDonorCount(deals) {
+export function uniqueDonorCount(donors) {
   const keys = new Set();
-  for (const d of deals) {
+  for (const d of donors) {
     const key = uniqueDonorKey(d);
     if (key) keys.add(key);
   }
   return keys.size;
 }
 
-// Groups deals by a field, returning amount total + unique donor count
+// Groups donors by a field, returning amount total + unique donor count
 // per group value. Used for Type, Donor Type, KAM, Platform breakdowns.
-export function groupSummary(deals, field) {
+export function groupSummary(donors, field) {
   const groups = {}; // name -> { amount, donorKeys: Set }
-  for (const d of deals) {
+  for (const d of donors) {
     const key = pick(d, field);
     if (!groups[key]) groups[key] = { amount: 0, donorKeys: new Set() };
     groups[key].amount += pickNumber(d, "Amount");
@@ -83,18 +83,37 @@ export function groupSummary(deals, field) {
     .sort((a, b) => b.amount - a.amount);
 }
 
+// Cross-tab: groups donors by Fiscal_year first, then runs groupSummary()
+// on the given field within each year. Powers "split by financial year"
+// AI questions (e.g. "Individual donor type amount split by FY") that
+// the flat groupSummary() above can't answer on its own.
+export function crossTabByFiscalYear(donors, field) {
+  const byFY = {};
+  for (const d of donors) {
+    const fy = pick(d, "Fiscal_year", "Unspecified");
+    if (!byFY[fy]) byFY[fy] = [];
+    byFY[fy].push(d);
+  }
+  return Object.fromEntries(
+    Object.entries(byFY)
+      .filter(([fy]) => fy !== "Unspecified")
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([fy, fydonors]) => [fy, groupSummary(fydonors, field)])
+  );
+}
+
 const FY_MONTH_ORDER = [
   "April", "May", "June", "July", "August", "September",
   "October", "November", "December", "January", "February", "March",
 ];
 
-// Month-wise summary for a set of deals, using Closing_Date for closed
-// deals (the month the money actually landed) or a supplied date field.
+// Month-wise summary for a set of donors, using Closing_Date for closed
+// donors (the month the money actually landed) or a supplied date field.
 // Always returns all 12 months April->March, zero-filled — so the table
 // shows the full FY shape rather than only months with activity.
-export function monthWiseSummary(deals, dateField = "Closing_Date") {
+export function monthWiseSummary(donors, dateField = "Closing_Date") {
   const byMonth = {};
-  for (const d of deals) {
+  for (const d of donors) {
     const raw = d[dateField];
     if (!raw) continue;
     const date = new Date(raw);
@@ -112,13 +131,13 @@ export function monthWiseSummary(deals, dateField = "Closing_Date") {
   }));
 }
 
-// Standard pipeline deals aren't closed yet, so there's no Closing_Date
+// Standard pipeline donors aren't closed yet, so there's no Closing_Date
 // to bucket by. Expected_Conversion_Month is a picklist (plain string
 // like "April"), not a date — group directly on that value instead of
 // trying to parse it as a Date. Also always returns all 12 months.
-export function monthWiseFromPicklist(deals, field = "Expected_Conversion_Month") {
+export function monthWiseFromPicklist(donors, field = "Expected_Conversion_Month") {
   const byMonth = {};
-  for (const d of deals) {
+  for (const d of donors) {
     const monthName = pick(d, field, null);
     if (!monthName) continue;
     if (!byMonth[monthName]) byMonth[monthName] = { amount: 0, donorKeys: new Set() };
@@ -141,13 +160,13 @@ export function fiscalMonthIndex(date) {
   return (date.getMonth() + 9) % 12; // getMonth(): Jan=0..Dec=11
 }
 
-// Totals for only the deals whose Closing_Date falls on or before the
+// Totals for only the donors whose Closing_Date falls on or before the
 // given fiscal-month cutoff (inclusive). E.g. cutoffFiscalIndex for
 // August (fiscal index 4) includes April-August, excludes September+.
 // This is what makes a mid-year FY-to-FY comparison fair: both sides
 // only count the same stretch of months.
-export function ytdTotals(deals, dateField, cutoffFiscalIndex) {
-  const subset = deals.filter((d) => {
+export function ytdTotals(donors, dateField, cutoffFiscalIndex) {
+  const subset = donors.filter((d) => {
     const raw = d[dateField];
     if (!raw) return false;
     const date = new Date(raw);
@@ -165,12 +184,12 @@ export function monthNameOf(closingDate) {
 
 // Builds the 4-way donor breakdown (Matching / Missing / New / Past) for
 // one calendar month, comparing fy1 vs fy2. See route comment for the
-// exact definition of each bucket. `deals` should already be filtered to
+// exact definition of each bucket. `donors` should already be filtered to
 // isClosed (and any Type filter) before calling this.
-export function buildMonthDonorBreakdown(deals, fy1, fy2, month) {
+export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
   const byDonor = {}; // donorKey -> { account, byFY: { [fiscalYear]: [entry, ...] } }
 
-  for (const d of deals) {
+  for (const d of donors) {
     const donorKey = uniqueDonorKey(d);
     if (!donorKey) continue;
     const fy = pick(d, "Fiscal_year", "Unspecified");
@@ -309,10 +328,10 @@ export function buildMonthDonorBreakdown(deals, fy1, fy2, month) {
 // same donor+type did in fy2. "Engaged" means the donor has ANY closed
 // deal in fy2 (any type) — a donor can be "Engaged" overall while still
 // showing "-" on a specific type row they didn't repeat.
-export function buildEngagementComparison(deals, standardDeals, fy1, fy2) {
+export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
   const byDonor = {}; // donorKey -> { account, byFY: { [fy]: { [type]: {amount, kam, platform, spoc, donorType} } } }
 
-  for (const d of deals) {
+  for (const d of donors) {
     const key = uniqueDonorKey(d);
     if (!key) continue;
     const fy = pick(d, "Fiscal_year", "Unspecified");
@@ -336,14 +355,14 @@ export function buildEngagementComparison(deals, standardDeals, fy1, fy2) {
     bucket.month = monthNameOf(d.Closing_Date);
   }
 
-  // Open/Standard Pipeline deals for the current fiscal year (fy2),
+  // Open/Standard Pipeline donors for the current fiscal year (fy2),
   // keyed by donor + Type — lets each row also show what's still
   // forecasted for that same donor+type combo, alongside their closed
   // history. Expected_Conversion_Month is a picklist, not a date, so
   // it's collected as text (joined if a donor has more than one
   // expected month for the same type) rather than parsed as a Date.
   const pipelineByDonorType = {};
-  for (const d of standardDeals) {
+  for (const d of standarddonors) {
     if (pick(d, "Fiscal_year", "") !== fy2) continue;
     const key = uniqueDonorKey(d);
     if (!key) continue;
@@ -425,19 +444,19 @@ export function buildEngagementComparison(deals, standardDeals, fy1, fy2) {
 }
 
 // The 3 standard engagement Types. Tables that group by Type always show
-// all 3, zero-filled, even if a KAM/FY combo has no deals of that Type —
+// all 3, zero-filled, even if a KAM/FY combo has no donors of that Type —
 // keeps the table shape consistent for the KAM comparison view.
 export const STANDARD_TYPES = ["Cash", "Kind", "School Engagement"];
 
-// Groups a set of deals by Type, then by Platform within each Type,
+// Groups a set of donors by Type, then by Platform within each Type,
 // summing amount and unique donor count at both levels. Always returns
 // all 3 STANDARD_TYPES (zero-filled); Platforms are whatever's actually
 // present in the data for that Type, sorted alphabetically.
-export function buildTypePlatformBreakdown(deals) {
+export function buildTypePlatformBreakdown(donors) {
   const byType = {};
   for (const type of STANDARD_TYPES) byType[type] = { byPlatform: {}, donorKeys: new Set(), amount: 0 };
 
-  for (const d of deals) {
+  for (const d of donors) {
     const type = pick(d, "Type");
     if (!byType[type]) byType[type] = { byPlatform: {}, donorKeys: new Set(), amount: 0 };
     const platform = pick(d, "Platform");
@@ -482,11 +501,11 @@ export function buildTypePlatformBreakdown(deals) {
   return { types, grandTotalAmount };
 }
 
-export function totalsFor(deals) {
+export function totalsFor(donors) {
   return {
-    amount: deals.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0),
-    donors: uniqueDonorCount(deals),
-    count: deals.length,
+    amount: donors.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0),
+    donors: uniqueDonorCount(donors),
+    count: donors.length,
   };
 }
 
@@ -509,4 +528,34 @@ export function mergeBreakdowns(rowsA, rowsB) {
   return Object.values(map).sort(
     (a, b) => (b.amountA + b.amountB) - (a.amountA + a.amountB)
   );
+}
+// Finds donors matching an arbitrary set of "gave in these FYs" AND "did
+// NOT give in these FYs" conditions — powers free-text queries like
+// "donated in 2022-23, 2023-24, 2024-25, and 2026-27 but not 2025-26".
+export function donorsByYearFilter(donors, { includeFYs = [], excludeFYs = [] } = {}) {
+  const byDonor = {}; // key -> { account, fys: Set, amounts: { fy: amount } }
+  for (const d of donors) {
+    const key = uniqueDonorKey(d);
+    if (!key) continue;
+    const fy = pick(d, "Fiscal_year", "Unspecified");
+    if (!byDonor[key]) byDonor[key] = { account: pick(d, "Account_Name"), fys: new Set(), amounts: {} };
+    byDonor[key].fys.add(fy);
+    byDonor[key].amounts[fy] = (byDonor[key].amounts[fy] || 0) + pickNumber(d, "Amount");
+  }
+
+  const rows = [];
+  for (const info of Object.values(byDonor)) {
+    const hasAllIncludes = includeFYs.every((fy) => info.fys.has(fy));
+    const hasNoneExcludes = excludeFYs.every((fy) => !info.fys.has(fy));
+    if (!hasAllIncludes || !hasNoneExcludes) continue;
+
+    const totalAmount = includeFYs.reduce((s, fy) => s + (info.amounts[fy] || 0), 0);
+    const row = { account: info.account, totalAmount };
+    includeFYs.forEach((fy) => {
+      row[`amount_${fy}`] = info.amounts[fy] || 0;
+    });
+    rows.push(row);
+  }
+
+  return rows.sort((a, b) => b.totalAmount - a.totalAmount);
 }

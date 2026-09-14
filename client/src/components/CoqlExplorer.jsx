@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api.js";
 
 const EXAMPLES = [
-  "select id, Deal_Name, Stage, Amount from Deals where Stage = 'Won' limit 20",
+  "select id, Deal_Name, Stage, Amount from donors where Stage = 'Won' limit 20",
   "select id, Account_Name, Industry from Accounts limit 20",
   "select id, Full_Name, Email from Contacts limit 20",
 ];

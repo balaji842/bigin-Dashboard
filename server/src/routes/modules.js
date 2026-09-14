@@ -70,7 +70,7 @@ router.get("/modules/:module/search", async (req, res) => {
   }
 });
 
-// POST /api/coql  { select_query: "select ... from Deals where ..." }
+// POST /api/coql  { select_query: "select ... from donors where ..." }
 router.post("/coql", async (req, res) => {
   const { select_query } = req.body || {};
   if (!select_query) {

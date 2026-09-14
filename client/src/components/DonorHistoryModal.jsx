@@ -26,11 +26,11 @@ function TypeBadge({ type }) {
 export default function DonorHistoryModal({ open, onClose, donor }) {
   // Hooks must run unconditionally, so this is computed before the
   // early-return check below (it just yields an empty shape when closed).
-  const { fyRows, sortedDeals } = useMemo(() => {
-    if (!donor) return { fyRows: [], sortedDeals: [] };
+  const { fyRows, sorteddonors } = useMemo(() => {
+    if (!donor) return { fyRows: [], sorteddonors: [] };
 
     const byFY = {};
-    for (const d of donor.deals) {
+    for (const d of donor.donors) {
       const fy = d.fiscalYear || "Unspecified";
       if (!byFY[fy]) byFY[fy] = { amount: 0, count: 0 };
       byFY[fy].amount += d.amount || 0;
@@ -40,7 +40,7 @@ export default function DonorHistoryModal({ open, onClose, donor }) {
       .map(([fy, v]) => ({ fy, ...v }))
       .sort((a, b) => b.fy.localeCompare(a.fy));
 
-    const sorted = [...donor.deals].sort((a, b) => {
+    const sorted = [...donor.donors].sort((a, b) => {
       const fyCmp = (b.fiscalYear || "").localeCompare(a.fiscalYear || "");
       if (fyCmp !== 0) return fyCmp;
       const da = a.closingDate ? new Date(a.closingDate).getTime() : 0;
@@ -48,7 +48,7 @@ export default function DonorHistoryModal({ open, onClose, donor }) {
       return db - da;
     });
 
-    return { fyRows: fyRowsCalc, sortedDeals: sorted };
+    return { fyRows: fyRowsCalc, sorteddonors: sorted };
   }, [donor]);
 
   if (!open || !donor) return null;
@@ -66,7 +66,7 @@ export default function DonorHistoryModal({ open, onClose, donor }) {
         <div className="bg-navy-900 text-white px-5 sm:px-6 py-4 flex items-start justify-between shrink-0">
           <div className="min-w-0">
             <p className="font-display font-bold text-base sm:text-lg truncate">{donor.account}</p>
-            <p className="text-xs text-white/50 mt-0.5">Full donor history · {donor.deals.length} deal{donor.deals.length !== 1 ? "s" : ""}</p>
+            <p className="text-xs text-white/50 mt-0.5">Full donor history · {donor.donors.length} deal{donor.donors.length !== 1 ? "s" : ""}</p>
           </div>
           <button onClick={onClose} className="text-white/70 hover:text-white text-xl leading-none ml-4 shrink-0">
             ×
@@ -129,7 +129,7 @@ export default function DonorHistoryModal({ open, onClose, donor }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedDeals.map((d, i) => {
+                  {sorteddonors.map((d, i) => {
                     const isPipeline = d.subPipeline === "Standard Pipeline";
                     return (
                       <tr key={i} className={i % 2 === 1 ? "bg-slate-50/60" : ""}>
@@ -157,7 +157,7 @@ export default function DonorHistoryModal({ open, onClose, donor }) {
                       </tr>
                     );
                   })}
-                  {sortedDeals.length === 0 && (
+                  {sorteddonors.length === 0 && (
                     <tr>
                       <td colSpan={7} className="px-4 py-6 text-center text-slate-400 text-xs">
                         No deal history found for this donor.

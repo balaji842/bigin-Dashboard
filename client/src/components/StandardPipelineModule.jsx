@@ -137,7 +137,7 @@ function downloadCsv(rows) {
 const PAGE_SIZE = 10;
 
 // Same "Donor History" table as the Conversion page, but for open
-// pipeline deals — "Month" here is the projected/expected conversion
+// pipeline donors — "Month" here is the projected/expected conversion
 // month (a picklist field), not an actual closing date.
 function DonorHistoryTable({ rows }) {
   const [search, setSearch] = useState("");
@@ -478,7 +478,7 @@ export default function StandardPipelineModule() {
               {data.monthWise.length === 0 && (
                 <tr>
                   <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
-                    No standard pipeline deals with an expected month set
+                    No standard pipeline donors with an expected month set
                   </td>
                 </tr>
               )}

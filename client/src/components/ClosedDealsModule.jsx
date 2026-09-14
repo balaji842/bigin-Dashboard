@@ -474,7 +474,7 @@ function ConversionTrendChart({ chartData, currentFY, prevFY }) {
 
 const FY = "2026-2027";
 
-export default function ClosedDealsModule() {
+export default function CloseddonorsModule() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -512,7 +512,7 @@ export default function ClosedDealsModule() {
     setError(null);
     const params = new URLSearchParams({ fy: FY });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
-    fetch(`/api/crm-analysis/closed-deals?${params.toString()}`)
+    fetch(`/api/crm-analysis/closed-donors?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -527,7 +527,7 @@ export default function ClosedDealsModule() {
   useEffect(() => {
     const params = new URLSearchParams({ fy: PREV_FY });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
-    fetch(`/api/crm-analysis/closed-deals?${params.toString()}`)
+    fetch(`/api/crm-analysis/closed-donors?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -568,7 +568,7 @@ export default function ClosedDealsModule() {
       <div className="space-y-5 sm:space-y-6">
         {filterBar}
         <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
-          Loading closed deals…
+          Loading closed donors…
         </div>
       </div>
     );
@@ -579,7 +579,7 @@ export default function ClosedDealsModule() {
       <div className="space-y-5 sm:space-y-6">
         {filterBar}
         <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
-          Couldn't load closed deals: {error}
+          Couldn't load closed donors: {error}
         </div>
       </div>
     );
@@ -645,7 +645,7 @@ export default function ClosedDealsModule() {
                 {data.monthWise.length === 0 && (
                   <tr>
                     <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
-                      No closed deals this FY
+                      No closed donors this FY
                     </td>
                   </tr>
                 )}

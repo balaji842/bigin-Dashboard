@@ -30,9 +30,9 @@ function parseListParam(raw) {
 }
 
 // Applies the Type/KAM/SPOC/Platform multi-select filters (any of which
-// may be null = not filtering on that field) to a list of deals.
-function applyFilters(deals, { types, kams, spocs, platforms }) {
-  let out = deals;
+// may be null = not filtering on that field) to a list of donors.
+function applyFilters(donors, { types, kams, spocs, platforms }) {
+  let out = donors;
   if (types && types.length > 0) out = out.filter((d) => types.includes(pick(d, "Type")));
   if (kams && kams.length > 0) out = out.filter((d) => kams.includes(pick(d, "Pipeline_KAM")));
   if (spocs && spocs.length > 0) out = out.filter((d) => spocs.includes(pick(d, "Spoc")));
@@ -49,9 +49,9 @@ const router = Router();
 // while the person has other filters narrowed down elsewhere in the UI.
 router.get("/crm-analysis/filter-options", async (_req, res) => {
   try {
-    const deals = await fetchAllRecords("Pipelines");
+    const donors = await fetchAllRecords("Pipelines");
     const distinct = (field) =>
-      [...new Set(deals.map((d) => pick(d, field)))].sort((a, b) => a.localeCompare(b));
+      [...new Set(donors.map((d) => pick(d, field)))].sort((a, b) => a.localeCompare(b));
 
     res.json({
       types: distinct("Type").filter((v) => v !== "Unspecified"),
@@ -73,24 +73,24 @@ router.get("/crm-analysis/overview", async (req, res) => {
   const selectedTypes = parseListParam(req.query.types);
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
+    const donors = await fetchAllRecords("Pipelines");
 
-    let filteredDeals = deals;
+    let filtereddonors = donors;
     if (selectedTypes && selectedTypes.length > 0) {
-      filteredDeals = filteredDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+      filtereddonors = filtereddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
     }
 
-    const closedDeals = filteredDeals.filter(isClosed);
-    const standardDeals = filteredDeals.filter(isStandardPipeline);
+    const closeddonors = filtereddonors.filter(isClosed);
+    const standarddonors = filtereddonors.filter(isStandardPipeline);
 
     // "ALL" scopes Month-wise / By Donor Type to every closed deal across
     // every fiscal year, instead of narrowing to a single selected FY.
     const closedThisFY =
       currentFY === "ALL"
-        ? closedDeals
-        : closedDeals.filter((d) => pick(d, "Fiscal_year", "") === currentFY);
+        ? closeddonors
+        : closeddonors.filter((d) => pick(d, "Fiscal_year", "") === currentFY);
 
-    const pipeline2027Approved = standardDeals.filter((d) => {
+    const pipeline2027Approved = standarddonors.filter((d) => {
       const stage = pick(d, "Stage", "").toLowerCase();
       return (
         pick(d, "Fiscal_year", "") === "2026-2027" &&
@@ -103,17 +103,17 @@ router.get("/crm-analysis/overview", async (req, res) => {
     res.json({
       fy: currentFY,
       closed: {
-        allTime: totalsFor(closedDeals),
+        allTime: totalsFor(closeddonors),
         thisFY: totalsFor(closedThisFY),
       },
       pipeline2027Approved: totalsFor(pipeline2027Approved),
 
-      // Totals per fiscal year found in the closed deals — powers the
-      // clickable FY cards on the Overview page. "Unspecified" (deals
+      // Totals per fiscal year found in the closed donors — powers the
+      // clickable FY cards on the Overview page. "Unspecified" (donors
       // with no Fiscal_year set) is dropped since it isn't a real year
       // to click into; sorted chronologically (the "YYYY-YYYY" format
       // sorts correctly as plain strings).
-      byFiscalYear: groupSummary(closedDeals, "Fiscal_year")
+      byFiscalYear: groupSummary(closeddonors, "Fiscal_year")
         .filter((r) => r.name !== "Unspecified")
         .sort((a, b) => a.name.localeCompare(b.name)),
 
@@ -125,7 +125,7 @@ router.get("/crm-analysis/overview", async (req, res) => {
 
       // Raw rows for the filterable table at the bottom of the module.
       // Kept lean — just what the table needs to display + filter on.
-      table: filteredDeals.map((d) => ({
+      table: filtereddonors.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
         amount: Number(d.Amount) || 0,
@@ -149,33 +149,33 @@ router.get("/crm-analysis/overview", async (req, res) => {
   }
 });
 
-// GET /api/crm-analysis/closed-deals?fy=2026-2027&types=Cash,Kind
+// GET /api/crm-analysis/closed-donors?fy=2026-2027&types=Cash,Kind
 // fy defaults to the current "FY 2026-27 Conversion" page's only year.
 // types is an optional comma-separated Cash/Kind/School Engagement filter.
-router.get("/crm-analysis/closed-deals", async (req, res) => {
+router.get("/crm-analysis/closed-donors", async (req, res) => {
   const currentFY = req.query.fy || "2026-2027";
   const selectedTypes = parseListParam(req.query.types);
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
-    let closedDeals = deals.filter(isClosed);
-    let standardDeals = deals.filter(isStandardPipeline);
+    const donors = await fetchAllRecords("Pipelines");
+    let closeddonors = donors.filter(isClosed);
+    let standarddonors = donors.filter(isStandardPipeline);
     if (selectedTypes && selectedTypes.length > 0) {
-      closedDeals = closedDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
-      standardDeals = standardDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+      closeddonors = closeddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
+      standarddonors = standarddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
     }
 
-    const closedThisFY = closedDeals.filter(
+    const closedThisFY = closeddonors.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
     );
-    const standardThisFY = standardDeals.filter(
+    const standardThisFY = standarddonors.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
     );
 
     // Every FY present in the closed data, kept for reference even though
     // the FY selector itself was removed from this page.
     const availableFYs = [
-      ...new Set(closedDeals.map((d) => pick(d, "Fiscal_year", "Unspecified"))),
+      ...new Set(closeddonors.map((d) => pick(d, "Fiscal_year", "Unspecified"))),
     ].sort();
 
     const monthWise = monthWiseSummary(closedThisFY, "Closing_Date");
@@ -197,7 +197,7 @@ router.get("/crm-analysis/closed-deals", async (req, res) => {
         amount: currentMonth.amount,
         donors: currentMonth.donors,
       },
-      allTimeTotals: totalsFor(closedDeals),
+      allTimeTotals: totalsFor(closeddonors),
 
       monthWise,
 
@@ -234,20 +234,20 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
   const selectedTypes = parseListParam(req.query.types);
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
-    let standardDeals = deals.filter(isStandardPipeline);
+    const donors = await fetchAllRecords("Pipelines");
+    let standarddonors = donors.filter(isStandardPipeline);
     if (selectedTypes && selectedTypes.length > 0) {
-      standardDeals = standardDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+      standarddonors = standarddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
     }
-    const standardThisFY = standardDeals.filter(
+    const standardThisFY = standarddonors.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
     );
 
     const availableFYs = [
-      ...new Set(standardDeals.map((d) => pick(d, "Fiscal_year", "Unspecified"))),
+      ...new Set(standarddonors.map((d) => pick(d, "Fiscal_year", "Unspecified"))),
     ].sort();
 
-    // Projected conversion month, not actual — these deals haven't
+    // Projected conversion month, not actual — these donors haven't
     // closed yet.
     const monthWise = monthWiseFromPicklist(standardThisFY, "Expected_Conversion_Month");
 
@@ -262,7 +262,7 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
       fy: currentFY,
       availableFYs,
       totals: totalsFor(standardThisFY),
-      allTimeTotals: totalsFor(standardDeals),
+      allTimeTotals: totalsFor(standarddonors),
       currentMonth: {
         name: currentMonth.name,
         amount: currentMonth.amount,
@@ -305,7 +305,7 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
   // Optional multi-select filters — comma-separated lists, e.g.
   // "Cash,Kind" or "Prakash,Rajesh". Any filter left out (no query
   // param) means "no restriction" on that field. Every card/table
-  // downstream is computed only from deals matching all supplied filters.
+  // downstream is computed only from donors matching all supplied filters.
   const filters = {
     types: parseListParam(req.query.types),
     kams: parseListParam(req.query.kams),
@@ -314,14 +314,14 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
   };
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
-    const closedDeals = applyFilters(deals.filter(isClosed), filters);
-    const standardDeals = applyFilters(deals.filter(isStandardPipeline), filters);
+    const donors = await fetchAllRecords("Pipelines");
+    const closeddonors = applyFilters(donors.filter(isClosed), filters);
+    const standarddonors = applyFilters(donors.filter(isStandardPipeline), filters);
 
-    const closedFY1 = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy1);
-    const closedFY2 = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy2);
-    const standardFY1 = standardDeals.filter((d) => pick(d, "Fiscal_year", "") === fy1);
-    const standardFY2 = standardDeals.filter((d) => pick(d, "Fiscal_year", "") === fy2);
+    const closedFY1 = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy1);
+    const closedFY2 = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy2);
+    const standardFY1 = standarddonors.filter((d) => pick(d, "Fiscal_year", "") === fy1);
+    const standardFY2 = standarddonors.filter((d) => pick(d, "Fiscal_year", "") === fy2);
 
     const closedTotalsA = totalsFor(closedFY1);
     const closedTotalsB = totalsFor(closedFY2);
@@ -476,10 +476,10 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
   };
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
-    const closedDeals = applyFilters(deals.filter(isClosed), filters);
+    const donors = await fetchAllRecords("Pipelines");
+    const closeddonors = applyFilters(donors.filter(isClosed), filters);
 
-    const breakdown = buildMonthDonorBreakdown(closedDeals, fy1, fy2, month);
+    const breakdown = buildMonthDonorBreakdown(closeddonors, fy1, fy2, month);
 
     res.json({
       fy1,
@@ -516,10 +516,10 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
   };
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
-    const closedDeals = applyFilters(deals.filter(isClosed), filters);
+    const donors = await fetchAllRecords("Pipelines");
+    const closeddonors = applyFilters(donors.filter(isClosed), filters);
 
-    const dealsThisMonth = closedDeals.filter(
+    const donorsThisMonth = closeddonors.filter(
       (d) => pick(d, "Fiscal_year", "") === fy && monthNameOf(d.Closing_Date) === month
     );
 
@@ -527,7 +527,7 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
     // once (matching the unique-donor count shown in the By Month table)
     // instead of once per deal.
     const byDonor = {};
-    for (const d of dealsThisMonth) {
+    for (const d of donorsThisMonth) {
       const key = uniqueDonorKey(d);
       if (!key) continue;
       if (!byDonor[key]) {
@@ -576,10 +576,10 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
   const fy2 = req.query.fy2 || "2026-2027";
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
-    const closedDeals = deals.filter(isClosed);
-    const standardDeals = deals.filter(isStandardPipeline);
-    const rows = buildEngagementComparison(closedDeals, standardDeals, fy1, fy2);
+    const donors = await fetchAllRecords("Pipelines");
+    const closeddonors = donors.filter(isClosed);
+    const standarddonors = donors.filter(isStandardPipeline);
+    const rows = buildEngagementComparison(closeddonors, standarddonors, fy1, fy2);
 
     res.json({
       fy1,
@@ -597,10 +597,10 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
 // Type x Platform breakdown for one KAM, for both fiscal years — powers
 // the "Comparison of [KAM] for the year [FY]" tables on Engagement
 // Status. Returns 3 totals per year:
-//   - conversion: full-year closed deals (used as "Total conversion")
-//   - ytd:        closed deals from April up to the current fiscal
+//   - conversion: full-year closed donors (used as "Total conversion")
+//   - ytd:        closed donors from April up to the current fiscal
 //                  month (used as fy1's "Apr-<month>" comparison row)
-//   - pipeline:   open/Standard Pipeline deals (used as fy2's "Pipeline"
+//   - pipeline:   open/Standard Pipeline donors (used as fy2's "Pipeline"
 //                  row; Balance-to-achieve is computed client-side from
 //                  Target - conversion - pipeline, since Target is a
 //                  separately-editable value, not CRM data)
@@ -616,23 +616,23 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
   }
 
   try {
-    const deals = await fetchAllRecords("Pipelines");
+    const donors = await fetchAllRecords("Pipelines");
     const matchesFilters = (d) =>
       pick(d, "Pipeline_KAM") === kam &&
       (!spoc || pick(d, "Spoc") === spoc) &&
       (!donorType || pick(d, "Type_of_donor") === donorType);
 
-    const closedDeals = deals.filter(isClosed).filter(matchesFilters);
-    const standardDeals = deals.filter(isStandardPipeline).filter(matchesFilters);
+    const closeddonors = donors.filter(isClosed).filter(matchesFilters);
+    const standarddonors = donors.filter(isStandardPipeline).filter(matchesFilters);
 
     const now = new Date();
     const cutoffIndex = fiscalMonthIndex(now);
     const currentMonthLabel = now.toLocaleString("en-US", { month: "short" });
 
     function buildYear(fy) {
-      const closedFY = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === fy);
-      const standardFY = standardDeals.filter((d) => pick(d, "Fiscal_year", "") === fy);
-      const ytdDeals = closedFY.filter((d) => {
+      const closedFY = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy);
+      const standardFY = standarddonors.filter((d) => pick(d, "Fiscal_year", "") === fy);
+      const ytddonors = closedFY.filter((d) => {
         const raw = d.Closing_Date;
         if (!raw) return false;
         const date = new Date(raw);
@@ -643,7 +643,7 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
       return {
         fy,
         conversion: buildTypePlatformBreakdown(closedFY),
-        ytd: buildTypePlatformBreakdown(ytdDeals),
+        ytd: buildTypePlatformBreakdown(ytddonors),
         pipeline: buildTypePlatformBreakdown(standardFY),
       };
     }

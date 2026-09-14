@@ -399,7 +399,7 @@ export default function FYComparisonModule() {
   const fy1 = "2025-2026";
   const fy2 = "2026-2027";
 
-  // Filter option lists (distinct values across all deals), fetched once.
+  // Filter option lists (distinct values across all donors), fetched once.
   const [filterOptions, setFilterOptions] = useState({ types: [], kams: [], spocs: [], platforms: [] });
 
   // Each filter is either null ("everything") or an explicit array of

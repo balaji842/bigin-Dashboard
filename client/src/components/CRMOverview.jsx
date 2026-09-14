@@ -84,8 +84,8 @@ function TypeFilterPills({ options, selected, onToggle }) {
 // Collapses the raw per-deal table into one row per donor (Account_Name)
 // for the Donor History table: total amount across every deal, plus the
 // distinct Donor Type(s)/KAM(s)/SPOC(s) that appear across that donor's
-// deals — joined with ", " when a donor has more than one of any of
-// these. Each donor's full list of underlying deals is kept as `deals`
+// donors — joined with ", " when a donor has more than one of any of
+// these. Each donor's full list of underlying donors is kept as `donors`
 // so the drilldown modal can show fiscal-year splits, months, and
 // per-deal engagement type without a second network call.
 function buildDonorHistory(table) {
@@ -99,7 +99,7 @@ function buildDonorHistory(table) {
         donorTypes: new Set(),
         kams: new Set(),
         spocs: new Set(),
-        deals: [],
+        donors: [],
       };
     }
     const entry = byAccount[row.account];
@@ -107,7 +107,7 @@ function buildDonorHistory(table) {
     if (row.donorType && row.donorType !== "Unspecified") entry.donorTypes.add(row.donorType);
     if (row.kam && row.kam !== "Unspecified") entry.kams.add(row.kam);
     if (row.spoc && row.spoc !== "Unspecified") entry.spocs.add(row.spoc);
-    entry.deals.push(row);
+    entry.donors.push(row);
   }
 
   return Object.values(byAccount)
@@ -117,7 +117,7 @@ function buildDonorHistory(table) {
       donorType: [...d.donorTypes].join(", ") || "—",
       kam: [...d.kams].join(", ") || "—",
       spoc: [...d.spocs].join(", ") || "—",
-      deals: d.deals,
+      donors: d.donors,
     }))
     .sort((a, b) => b.totalAmount - a.totalAmount);
 }
@@ -264,7 +264,7 @@ export default function CRMOverview() {
       </div>
 
       <div>
-        <p className="font-display font-semibold text-navy-900 mb-3 text-sm">Closed Deals by Fiscal Year</p>
+        <p className="font-display font-semibold text-navy-900 mb-3 text-sm">Closed donors by Fiscal Year</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {otherYears.map((y) => (
             <FYCard

@@ -1,5 +1,5 @@
 import express from "express";
-import { askGroq as askOllama } from "../lib/groqService.js";
+import { askAI } from "../lib/aiProvider.js";
 import { getCRMContext, getRawDeals } from "../lib/crmContext.js";
 import { findDonor } from "../lib/donorSearch.js";
 
@@ -7,7 +7,7 @@ const router = express.Router();
 
 router.post("/ai/chat", async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, history } = req.body;
     if (!message || !message.trim()) {
       return res.status(400).json({ success: false, error: "Message is required" });
     }
@@ -22,10 +22,16 @@ router.post("/ai/chat", async (req, res) => {
       console.error("[ai] Failed to fetch CRM context:", ctxErr.message);
     }
 
-    const answer = await askOllama(message, crmContext, donorMatch);
-    res.json({ success: true, answer });
+    const { answer, provider } = await askAI({
+      message,
+      crmContext,
+      donorMatch,
+      history: Array.isArray(history) ? history : [],
+    });
+
+    res.json({ success: true, answer, provider });
   } catch (error) {
-    console.error("Groq AI error:", error);
+    console.error("AI chat error:", error);
     res.status(500).json({ success: false, error: "AI request failed" });
   }
 });

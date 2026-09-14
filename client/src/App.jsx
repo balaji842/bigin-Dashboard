@@ -11,7 +11,7 @@ import LoginGate, { isUnlocked } from "./components/LoginGate.jsx";
 import AIChatbot from "./components/AIChatbot.jsx";
 
 const PAGE_TITLES = {
-  "closed-deals": {
+  "closed-donors": {
     title: "FY 2026–27 Conversion",
     sub: "",
   },
@@ -21,7 +21,7 @@ const PAGE_TITLES = {
 },
   "fy-comparison": {
     title: "FY 2025-26 vs FY 2026-27",
-    sub: "Side-by-side comparison of closed deals and standard pipeline across both fiscal years.",
+    sub: "Side-by-side comparison of closed donors and standard pipeline across both fiscal years.",
   },
   "engagement-status": {
     title: "Engagement Status",
@@ -29,7 +29,7 @@ const PAGE_TITLES = {
   },
   "crm-overview": {
     title: "CRM Analysis · Overview",
-    sub: "Closed deals, standard pipeline, and donor breakdowns pulled fresh from Bigin.",
+    sub: "Closed donors, standard pipeline, and donor breakdowns pulled fresh from Bigin.",
   },
 };
 
@@ -102,7 +102,7 @@ export default function App() {
           {activePage === "standard-pipeline" && <StandardPipelineModule />}
           {activePage === "fy-comparison" && <FYComparisonModule />}
           {activePage === "engagement-status" && <EngagementStatusModule />}
-          {activePage === "closed-deals" && <ClosedDealsModule />}
+          {activePage === "closed-donors" && <ClosedDealsModule />}
         </main>
 
         <footer className="border-t border-slate-200 px-4 sm:px-6 md:px-8 py-3 max-w-6xl mx-auto w-full flex flex-col sm:flex-row gap-1 sm:gap-0 items-start sm:items-center justify-between text-xs text-slate-400">

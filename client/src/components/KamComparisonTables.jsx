@@ -137,9 +137,9 @@ function TargetRow({ typeLayout, targets, onChange, onBlur }) {
 function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChange, onTargetBlur, allPlatforms }) {
   const types = typeNamesOf([yearData?.conversion, yearData?.ytd, yearData?.pipeline]);
   // Every Type shows the SAME Platform columns (the full set found across
-  // all deals, not just this KAM's), so the table shape is predictable
+  // all donors, not just this KAM's), so the table shape is predictable
   // and consistent no matter which KAM is selected — a KAM with zero
-  // School Engagement deals still shows P1/P2/P3, just zero-filled,
+  // School Engagement donors still shows P1/P2/P3, just zero-filled,
   // rather than silently dropping those columns.
   const typeLayout = types.map((type) => ({ type, platforms: allPlatforms }));
 
@@ -231,7 +231,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
 
   // Load the KAM/SPOC/Donor Type lists and the full Platform list once,
   // from the existing filter-options endpoint. Platforms come from here
-  // (not from this KAM's own deals) so every table always shows the same
+  // (not from this KAM's own donors) so every table always shows the same
   // P1/P2/P3 columns for every Type, regardless of which KAM is selected.
   useEffect(() => {
     fetch("/api/crm-analysis/filter-options")

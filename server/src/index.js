@@ -3,6 +3,7 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 import "dotenv/config";
+import exportRoutes from "./routes/export.js";
 
 import modulesRouter from "./routes/modules.js";
 import analyticsRouter from "./routes/analytics.js";
@@ -26,6 +27,7 @@ app.use("/api", modulesRouter);
 app.use("/api", analyticsRouter);
 app.use("/api", crmAnalysisRouter);
 app.use("/api", aiRouter);
+app.use("/api", exportRoutes);
 
 // Serve the built React app (client/dist), produced by `npm run build`
 // in the client folder as part of the Render build step.

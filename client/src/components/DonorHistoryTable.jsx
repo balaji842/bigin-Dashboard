@@ -36,7 +36,7 @@ function IconChevronRight(props) {
 
 // Colour themes for the Donor Type pill — falls back to a neutral slate
 // pill for any type not in this list (or when a donor has more than one
-// distinct type across their deals, which prints as a comma list instead
+// distinct type across their donors, which prints as a comma list instead
 // of a single pill).
 const DONOR_TYPE_THEME = {
   Corporate: "bg-blue-50 text-blue-700",

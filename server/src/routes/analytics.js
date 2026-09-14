@@ -33,7 +33,7 @@ function sumByGroup(records, groupField, valueField, fallback = "Unspecified") {
 // GET /api/analytics/summary -> one call that powers the Overview tab
 router.get("/analytics/summary", async (_req, res) => {
   try {
-    const [deals, accounts, contacts, tasks, calls, meetings] =
+    const [donors, accounts, contacts, tasks, calls, meetings] =
       await Promise.all([
         fetchAllRecords("Pipelines"),
         fetchAllRecords("Accounts"),
@@ -43,41 +43,41 @@ router.get("/analytics/summary", async (_req, res) => {
         fetchAllRecords("Events"),
       ]);
 
-    const openDeals = deals.filter(
+    const opendonors = donors.filter(
       (d) => !["Won", "Lost", "Closed Won", "Closed Lost"].includes(d.Stage)
     );
-    const wonDeals = deals.filter((d) => /won/i.test(d.Stage || ""));
-    const lostDeals = deals.filter((d) => /lost/i.test(d.Stage || ""));
+    const wondonors = donors.filter((d) => /won/i.test(d.Stage || ""));
+    const lostdonors = donors.filter((d) => /lost/i.test(d.Stage || ""));
 
-    const totalPipelineValue = openDeals.reduce(
+    const totalPipelineValue = opendonors.reduce(
       (sum, d) => sum + (Number(d.Amount) || 0),
       0
     );
-    const totalWonValue = wonDeals.reduce(
+    const totalWonValue = wondonors.reduce(
       (sum, d) => sum + (Number(d.Amount) || 0),
       0
     );
 
     res.json({
       counts: {
-        deals: deals.length,
+        donors: donors.length,
         accounts: accounts.length,
         contacts: contacts.length,
         tasks: tasks.length,
         calls: calls.length,
         meetings: meetings.length,
-        openDeals: openDeals.length,
-        wonDeals: wonDeals.length,
-        lostDeals: lostDeals.length,
+        opendonors: opendonors.length,
+        wondonors: wondonors.length,
+        lostdonors: lostdonors.length,
       },
       value: {
         totalPipelineValue,
         totalWonValue,
       },
       charts: {
-        dealsByStage: groupCount(deals, "Stage"),
-        dealsByPipeline: groupCount(deals, "Sub_Pipeline"),
-        dealValueByStage: sumByGroup(deals, "Stage", "Amount"),
+        donorsByStage: groupCount(donors, "Stage"),
+        donorsByPipeline: groupCount(donors, "Sub_Pipeline"),
+        dealValueByStage: sumByGroup(donors, "Stage", "Amount"),
         accountsByIndustry: groupCount(accounts, "Industry"),
         tasksByStatus: groupCount(tasks, "Status"),
         activitiesByType: [

@@ -6,6 +6,8 @@ import {
   isApprovedByRajesh,
   totalsFor,
   groupSummary,
+  crossTabByFiscalYear,
+  monthWiseSummary,
 } from "./dealHelpers.js";
 
 // Re-fetching thousands of records from Zoho on every chat message would be
@@ -14,7 +16,18 @@ let cachedContext = null;
 let cachedAt = 0;
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 
-const CURRENT_FY = "2025-2026"; // matches the default used across crmAnalysis.js
+// Fiscal year runs April -> March. Computed from today's date so this
+// never goes stale the way a hardcoded "2025-2026" string previously did.
+function fiscalYearLabel(date) {
+  const month = date.getMonth(); // Jan = 0
+  const year = date.getFullYear();
+  return month >= 3 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+}
+
+function priorFiscalYearLabel(label) {
+  const [a, b] = label.split("-").map(Number);
+  return `${a - 1}-${b - 1}`;
+}
 
 function fieldValue(record, field, fallback = "Unspecified") {
   const raw = record[field];
@@ -42,6 +55,11 @@ export async function getCRMContext({ force = false } = {}) {
     return cachedContext;
   }
 
+  const today = new Date();
+  const CURRENT_FY = fiscalYearLabel(today);
+  const PRIOR_FY = priorFiscalYearLabel(CURRENT_FY);
+  const currentMonthName = today.toLocaleString("en-US", { month: "long" });
+
   const [deals, accounts, contacts, tasks, calls, events] = await Promise.all([
     fetchAllRecords("Pipelines"),
     fetchAllRecords("Accounts"),
@@ -55,15 +73,22 @@ export async function getCRMContext({ force = false } = {}) {
   // closed vs open, NOT the Stage field's text.
   const closedDeals = deals.filter(isClosed);
   const standardDeals = deals.filter(isStandardPipeline);
-  const closedThisFY = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === CURRENT_FY);
-  const pipeline2027Approved = standardDeals.filter(
-    (d) => pick(d, "Fiscal_year", "") === "2026-2027" && isApprovedByRajesh(d)
+  const closedCurrentFY = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === CURRENT_FY);
+  const closedPriorFY = closedDeals.filter((d) => pick(d, "Fiscal_year", "") === PRIOR_FY);
+  const pipelineCurrentFYApproved = standardDeals.filter(
+    (d) => pick(d, "Fiscal_year", "") === CURRENT_FY && isApprovedByRajesh(d)
+  );
+  const pipelineCurrentFYApprovedThisMonth = pipelineCurrentFYApproved.filter(
+    (d) => pick(d, "Expected_Conversion_Month", "") === currentMonthName
   );
 
   const openTasks = tasks.filter((t) => t.Status && !/complete|closed/i.test(t.Status));
 
   cachedContext = {
-    generatedAt: new Date().toISOString(),
+    generatedAt: today.toISOString(),
+    currentFYLabel: CURRENT_FY,
+    priorFYLabel: PRIOR_FY,
+    currentMonthName,
 
     counts: {
       totalDeals: deals.length,
@@ -80,12 +105,14 @@ export async function getCRMContext({ force = false } = {}) {
     // These match the actual numbers shown on the CRM Analysis > Overview page.
     conversion: {
       allTime: totalsFor(closedDeals),       // e.g. ₹1143.70 Cr, 2726 donors
-      currentFY: totalsFor(closedThisFY),
+      currentFY: totalsFor(closedCurrentFY),
       currentFYLabel: CURRENT_FY,
+      priorFY: totalsFor(closedPriorFY),
+      priorFYLabel: PRIOR_FY,
     },
     pipeline: {
       allOpen: totalsFor(standardDeals),
-      fy2027Approved: totalsFor(pipeline2027Approved), // e.g. ₹87.25 Cr, 66 donors
+      currentFYApproved: totalsFor(pipelineCurrentFYApproved),
     },
 
     byFiscalYear: groupSummary(closedDeals, "Fiscal_year").filter((r) => r.name !== "Unspecified"),
@@ -94,6 +121,41 @@ export async function getCRMContext({ force = false } = {}) {
     byKAM: topN(groupSummary(closedDeals, "Pipeline_KAM")),
     byPlatform: topN(groupSummary(closedDeals, "Platform")),
     byStage: groupCount(deals, "Stage"),
+
+    // Same four breakdowns as above, but cross-tabbed by fiscal year —
+    // lets the AI answer "X split by financial year" or "X for FY <current>
+    // only" questions instead of only all-time totals.
+    byTypeByFY: crossTabByFiscalYear(closedDeals, "Type"),
+    byDonorTypeByFY: crossTabByFiscalYear(closedDeals, "Type_of_donor"),
+    byKAMByFY: crossTabByFiscalYear(closedDeals, "Pipeline_KAM"),
+    byPlatformByFY: crossTabByFiscalYear(closedDeals, "Platform"),
+
+    // Month-wise conversion for the current and prior fiscal years —
+    // matches the "Month-wise" table on the Overview/Conversion pages.
+    // Always all 12 months April->March, zero-filled.
+    monthWiseByFY: {
+      [CURRENT_FY]: monthWiseSummary(closedCurrentFY, "Closing_Date"),
+      [PRIOR_FY]: monthWiseSummary(closedPriorFY, "Closing_Date"),
+    },
+
+    // Pipeline breakdowns, scoped to the CURRENT fiscal year's approved
+    // deals only.
+    pipelineCurrentFYApproved: {
+      fyLabel: CURRENT_FY,
+      totals: totalsFor(pipelineCurrentFYApproved),
+      byType: groupSummary(pipelineCurrentFYApproved, "Type"),
+      byDonorType: groupSummary(pipelineCurrentFYApproved, "Type_of_donor"),
+      byPlatform: groupSummary(pipelineCurrentFYApproved, "Platform"),
+      byKAM: groupSummary(pipelineCurrentFYApproved, "Pipeline_KAM"),
+      currentMonth: {
+        monthLabel: currentMonthName,
+        totals: totalsFor(pipelineCurrentFYApprovedThisMonth),
+        byType: groupSummary(pipelineCurrentFYApprovedThisMonth, "Type"),
+        byDonorType: groupSummary(pipelineCurrentFYApprovedThisMonth, "Type_of_donor"),
+        byPlatform: groupSummary(pipelineCurrentFYApprovedThisMonth, "Platform"),
+        byKAM: groupSummary(pipelineCurrentFYApprovedThisMonth, "Pipeline_KAM"),
+      },
+    },
 
     tasksByStatus: groupCount(tasks, "Status"),
     accountsByIndustry: topNObj(groupCount(accounts, "Industry")),

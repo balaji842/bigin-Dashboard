@@ -50,12 +50,12 @@ function topWithOther(list, n = 8) {
   return [...top, { name: `Other (${rest.length})`, value: otherValue }];
 }
 
-function StageTable({ dealsByStage, dealValueByStage, totalPipelineValue }) {
+function StageTable({ donorsByStage, dealValueByStage, totalPipelineValue }) {
   const valueByName = Object.fromEntries(
     (dealValueByStage || []).map((d) => [d.name, d.value])
   );
 
-  const rows = (dealsByStage || []).map((d) => {
+  const rows = (donorsByStage || []).map((d) => {
     const amount = valueByName[d.name] || 0;
     const pct = totalPipelineValue ? (amount / totalPipelineValue) * 100 : 0;
     return { name: d.name, count: d.value, amount, pct };
@@ -71,7 +71,7 @@ function StageTable({ dealsByStage, dealValueByStage, totalPipelineValue }) {
           <thead>
             <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
               <th className="px-4 sm:px-5 py-3 font-semibold">Stage</th>
-              <th className="px-4 sm:px-5 py-3 font-semibold text-right">Deals</th>
+              <th className="px-4 sm:px-5 py-3 font-semibold text-right">donors</th>
               <th className="px-4 sm:px-5 py-3 font-semibold text-right">Value</th>
               <th className="px-4 sm:px-5 py-3 font-semibold text-right">% of pipeline</th>
             </tr>
@@ -105,8 +105,8 @@ export default function Overview({ data }) {
   return (
     <div className="space-y-5 sm:space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-        <StatCard label="Open Deals" value={counts.openDeals} icon={IconTarget} accent="pink" />
-        <StatCard label="Won Deals" value={counts.wonDeals} icon={IconCheckCircle} accent="emerald" />
+        <StatCard label="Open donors" value={counts.opendonors} icon={IconTarget} accent="pink" />
+        <StatCard label="Won donors" value={counts.wondonors} icon={IconCheckCircle} accent="emerald" />
         <StatCard
           label="Open Pipeline Value"
           value={money(value.totalPipelineValue)}
@@ -131,9 +131,9 @@ export default function Overview({ data }) {
       </div>
 
       <div className="grid md:grid-cols-2 gap-4 sm:gap-5">
-        <ChartCard title="Deals by stage">
+        <ChartCard title="donors by stage">
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={topWithOther(charts.dealsByStage, 8)} layout="vertical">
+            <BarChart data={topWithOther(charts.donorsByStage, 8)} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" />
               <YAxis
@@ -170,7 +170,7 @@ export default function Overview({ data }) {
       </div>
 
       <StageTable
-        dealsByStage={charts.dealsByStage}
+        donorsByStage={charts.donorsByStage}
         dealValueByStage={charts.dealValueByStage}
         totalPipelineValue={value.totalPipelineValue}
       />

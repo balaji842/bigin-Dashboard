@@ -1,6 +1,6 @@
 // Matches a donor/account name mentioned in a free-text chat message
-// against the Account_Name values present in the raw deals data, then
-// aggregates that donor's deals the way groqService.js expects:
+// against the Account_Name values present in the raw donors data, then
+// aggregates that donor's donors the way groqService.js expects:
 // { accountName, totalAmount, dealCount, byFiscalYear, types }.
 
 import { pick, pickNumber, uniqueDonorKey } from "./dealHelpers.js";
@@ -27,12 +27,12 @@ function isMeaningfulMatch(normalizedName) {
 }
 
 /**
- * @param {Array} deals - raw deal records (as returned by fetchAllRecords("Pipelines"))
+ * @param {Array} donors - raw deal records (as returned by fetchAllRecords("Pipelines"))
  * @param {string} message - the user's chat message
  * @returns {null | { accountName, totalAmount, dealCount, byFiscalYear, types }}
  */
-export function findDonor(deals, message) {
-  if (!deals || deals.length === 0 || !message) return null;
+export function findDonor(donors, message) {
+  if (!donors || donors.length === 0 || !message) return null;
 
   const normalizedMessage = normalize(message);
   if (!normalizedMessage) return null;
@@ -41,7 +41,7 @@ export function findDonor(deals, message) {
   // deduping via uniqueDonorKey so casing/whitespace variants collapse
   // to a single candidate.
   const candidatesByKey = new Map(); // donorKey -> { display, normalized }
-  for (const d of deals) {
+  for (const d of donors) {
     const key = uniqueDonorKey(d);
     if (!key || candidatesByKey.has(key)) continue;
     const display = pick(d, "Account_Name", null);
@@ -68,27 +68,27 @@ export function findDonor(deals, message) {
   // Aggregate every deal belonging to the matched donor (match by the
   // same normalized name, so all casing/whitespace variants roll up
   // together).
-  const donorDeals = deals.filter((d) => {
+  const donordonors = donors.filter((d) => {
     const name = pick(d, "Account_Name", null);
     return name && normalize(name) === best.normalized;
   });
 
-  if (donorDeals.length === 0) return null;
+  if (donordonors.length === 0) return null;
 
-  const totalAmount = donorDeals.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0);
+  const totalAmount = donordonors.reduce((sum, d) => sum + pickNumber(d, "Amount"), 0);
 
   const byFiscalYear = {};
-  for (const d of donorDeals) {
+  for (const d of donordonors) {
     const fy = pick(d, "Fiscal_year", "Unspecified");
     byFiscalYear[fy] = (byFiscalYear[fy] || 0) + pickNumber(d, "Amount");
   }
 
-  const types = [...new Set(donorDeals.map((d) => pick(d, "Type", "Unspecified")))];
+  const types = [...new Set(donordonors.map((d) => pick(d, "Type", "Unspecified")))];
 
   return {
     accountName: best.display,
     totalAmount,
-    dealCount: donorDeals.length,
+    dealCount: donordonors.length,
     byFiscalYear,
     types,
   };
