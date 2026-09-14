@@ -12,13 +12,13 @@ import AIChatbot from "./components/AIChatbot.jsx";
 
 const PAGE_TITLES = {
   "closed-deals": {
-    title: "Closed Deals · Conversion",
-    sub: "Fiscal-year conversion totals, month-wise trend, and donor breakdowns for closed deals.",
+    title: "FY 2026–27 Conversion",
+    sub: "",
   },
   "standard-pipeline": {
-    title: "Standard Pipeline",
-    sub: "Open pipeline by stage, projected conversion month, and donor breakdowns.",
-  },
+  title: "FY 2026–27 Pipeline",
+  sub: "",
+},
   "fy-comparison": {
     title: "FY 2025-26 vs FY 2026-27",
     sub: "Side-by-side comparison of closed deals and standard pipeline across both fiscal years.",
@@ -95,7 +95,7 @@ export default function App() {
         <main className="flex-1 p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full">
           <header className="mb-5 sm:mb-6 hidden md:block">
             <h1 className="font-display text-2xl font-bold text-navy-900">{pageInfo.title}</h1>
-            <p className="text-sm text-slate-500">{pageInfo.sub}</p>
+            {pageInfo.sub && <p className="text-sm text-slate-500">{pageInfo.sub}</p>}
           </header>
 
           {activePage === "crm-overview" && <CRMOverview />}
@@ -119,4 +119,4 @@ export default function App() {
 
     </div>
   );
-} 
+}

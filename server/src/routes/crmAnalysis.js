@@ -149,30 +149,57 @@ router.get("/crm-analysis/overview", async (req, res) => {
   }
 });
 
-// GET /api/crm-analysis/closed-deals?fy=2025-2026
+// GET /api/crm-analysis/closed-deals?fy=2026-2027&types=Cash,Kind
+// fy defaults to the current "FY 2026-27 Conversion" page's only year.
+// types is an optional comma-separated Cash/Kind/School Engagement filter.
 router.get("/crm-analysis/closed-deals", async (req, res) => {
-  const currentFY = req.query.fy || "2025-2026";
+  const currentFY = req.query.fy || "2026-2027";
+  const selectedTypes = parseListParam(req.query.types);
 
   try {
     const deals = await fetchAllRecords("Pipelines");
-    const closedDeals = deals.filter(isClosed);
+    let closedDeals = deals.filter(isClosed);
+    let standardDeals = deals.filter(isStandardPipeline);
+    if (selectedTypes && selectedTypes.length > 0) {
+      closedDeals = closedDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+      standardDeals = standardDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
+
     const closedThisFY = closedDeals.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
     );
+    const standardThisFY = standardDeals.filter(
+      (d) => pick(d, "Fiscal_year", "") === currentFY
+    );
 
-    // Every FY present in the closed data, for the dropdown — so the
-    // list stays accurate as new fiscal years get added in Bigin.
+    // Every FY present in the closed data, kept for reference even though
+    // the FY selector itself was removed from this page.
     const availableFYs = [
       ...new Set(closedDeals.map((d) => pick(d, "Fiscal_year", "Unspecified"))),
     ].sort();
+
+    const monthWise = monthWiseSummary(closedThisFY, "Closing_Date");
+
+    // "Current month" card: always the real calendar month we're in right
+    // now, mapped onto its April->March fiscal position — so this rolls
+    // from September to October automatically with no code change.
+    const now = new Date();
+    const cutoffIndex = fiscalMonthIndex(now);
+    const currentMonth = monthWise[cutoffIndex];
 
     res.json({
       fy: currentFY,
       availableFYs,
       totals: totalsFor(closedThisFY),
+      pipelineTotals: totalsFor(standardThisFY),
+      currentMonth: {
+        name: currentMonth.name,
+        amount: currentMonth.amount,
+        donors: currentMonth.donors,
+      },
       allTimeTotals: totalsFor(closedDeals),
 
-      monthWise: monthWiseSummary(closedThisFY, "Closing_Date"),
+      monthWise,
 
       byType: groupSummary(closedThisFY, "Type"),
       byDonorType: groupSummary(closedThisFY, "Type_of_donor"),
@@ -201,13 +228,17 @@ router.get("/crm-analysis/closed-deals", async (req, res) => {
   }
 });
 
-// GET /api/crm-analysis/standard-pipeline?fy=2025-2026
+// GET /api/crm-analysis/standard-pipeline?fy=2026-2027&types=Cash,Kind
 router.get("/crm-analysis/standard-pipeline", async (req, res) => {
-  const currentFY = req.query.fy || "2025-2026";
+  const currentFY = req.query.fy || "2026-2027";
+  const selectedTypes = parseListParam(req.query.types);
 
   try {
     const deals = await fetchAllRecords("Pipelines");
-    const standardDeals = deals.filter(isStandardPipeline);
+    let standardDeals = deals.filter(isStandardPipeline);
+    if (selectedTypes && selectedTypes.length > 0) {
+      standardDeals = standardDeals.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
     const standardThisFY = standardDeals.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
     );
@@ -216,15 +247,29 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
       ...new Set(standardDeals.map((d) => pick(d, "Fiscal_year", "Unspecified"))),
     ].sort();
 
+    // Projected conversion month, not actual — these deals haven't
+    // closed yet.
+    const monthWise = monthWiseFromPicklist(standardThisFY, "Expected_Conversion_Month");
+
+    // Same rolling "current month" card as the Conversion page: maps
+    // today's real calendar month onto its April->March fiscal
+    // position, so it advances on its own every month.
+    const now = new Date();
+    const cutoffIndex = fiscalMonthIndex(now);
+    const currentMonth = monthWise[cutoffIndex];
+
     res.json({
       fy: currentFY,
       availableFYs,
       totals: totalsFor(standardThisFY),
       allTimeTotals: totalsFor(standardDeals),
+      currentMonth: {
+        name: currentMonth.name,
+        amount: currentMonth.amount,
+        donors: currentMonth.donors,
+      },
 
-      // Projected conversion month, not actual — these deals haven't
-      // closed yet.
-      monthWise: monthWiseFromPicklist(standardThisFY, "Expected_Conversion_Month"),
+      monthWise,
 
       byStage: groupSummary(standardThisFY, "Stage"),
       byType: groupSummary(standardThisFY, "Type"),
