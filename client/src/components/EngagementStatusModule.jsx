@@ -164,6 +164,25 @@ function SummaryIconBadge({ iconBg, icon: Icon }) {
   );
 }
 
+// Amount column always shows the combined total for that FY+Type (same
+// as before the per-deal-split experiment) — a donor with several deals
+// in one FY still shows one summed value here.
+function AmountBreakdown({ amount }) {
+  return amount != null ? moneyCr(amount) : <span className="text-slate-300">—</span>;
+}
+
+// Month column lists every distinct month that donor gave in for that
+// FY+Type, comma-separated, with duplicates collapsed — e.g. two March
+// deals plus one April deal show "March, April", not "March, March,
+// April". Order follows the underlying deals array (most recent first).
+function MonthBreakdown({ month, deals }) {
+  if (deals && deals.length > 1) {
+    const uniqueMonths = [...new Set(deals.map((d) => d.month).filter(Boolean))];
+    return uniqueMonths.length > 0 ? <span>{uniqueMonths.join(", ")}</span> : <span className="text-slate-300">—</span>;
+  }
+  return month || <span className="text-slate-300">—</span>;
+}
+
 function EngagementPill({ engaged }) {
   return engaged ? (
     <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 whitespace-nowrap">
@@ -642,22 +661,22 @@ export default function EngagementStatusModule() {
                       </td>
                     )}
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
-                      {r.fy1Amount != null ? moneyCr(r.fy1Amount) : <span className="text-slate-300">—</span>}
+                      <AmountBreakdown amount={r.fy1Amount} />
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
                       {r.fy1Type || <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
-                      {r.fy1Month || <span className="text-slate-300">—</span>}
+                    <td className="px-3 py-2.5 text-center align-middle">
+                      <MonthBreakdown month={r.fy1Month} deals={r.fy1Deals} />
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
-                      {r.fy2Amount != null ? moneyCr(r.fy2Amount) : <span className="text-slate-300">—</span>}
+                      <AmountBreakdown amount={r.fy2Amount} />
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
                       {r.fy2Type || <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
-                      {r.fy2Month || <span className="text-slate-300">—</span>}
+                    <td className="px-3 py-2.5 text-center align-middle">
+                      <MonthBreakdown month={r.fy2Month} deals={r.fy2Deals} />
                     </td>
                     <td className="px-3 py-2.5 text-center border-l border-slate-100 whitespace-nowrap align-middle">
                       {r.diffAmount != null ? (

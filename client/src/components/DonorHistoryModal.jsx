@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { moneyCr, fullMoney } from "../lib/format.js";
+import { IconBuilding, IconUsers } from "./icons.jsx";
 
 function monthNameOf(closingDate) {
   if (!closingDate) return null;
@@ -20,6 +21,246 @@ function TypeBadge({ type }) {
     <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${theme}`}>
       {type}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Company & Contact module — pulls the live Bigin Accounts record (and
+// any linked Contacts) for the donor, via the generic /api/modules/*
+// routes, and renders them the way Bigin itself would (label: value).
+//
+// Field API names aren't hardcoded: we fetch each module's field
+// metadata (/api/modules/<module>/fields) once and match by the
+// human-readable label shown in Bigin's UI (e.g. "Donor Type", "SPOC"),
+// so this keeps working even if a field's underlying API name differs
+// from what's guessed here.
+// ---------------------------------------------------------------------
+
+const ACCOUNT_INFO_LABELS = [
+  "KAM",
+  "Platform",
+  "SPOC",
+  "Donor Type",
+  "Sub_KAM",
+  "Category",
+  "Donation Type",
+  "Rhapsody / IGCC",
+];
+
+const CONTACT_INFO_LABELS = [
+  "Email",
+  "Phone",
+  "Secondary Email",
+  "Designation",
+  "Other Phone",
+  "Address",
+  "District",
+  "Pincode",
+  "Lead Source",
+];
+
+function normLabel(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function pickValue(record, apiName) {
+  if (!record || !apiName) return null;
+  const raw = record[apiName];
+  if (raw == null || raw === "") return null;
+  if (typeof raw === "object") return raw.name || raw.value || null;
+  return String(raw);
+}
+
+function buildLabelMap(fieldsMeta) {
+  const map = {};
+  for (const f of fieldsMeta || []) {
+    const label = f.field_label || f.display_label || f.api_name;
+    if (!label) continue;
+    map[normLabel(label)] = f.api_name;
+  }
+  return map;
+}
+
+function resolveFields(record, labelMap, labels) {
+  const out = [];
+  for (const label of labels) {
+    const apiName = labelMap[normLabel(label)];
+    if (!apiName) continue; // this org's Bigin schema doesn't have this field
+    out.push({ label, value: pickValue(record, apiName) });
+  }
+  return out;
+}
+
+// Cached at module scope — field schemas don't change per-donor, so
+// every modal open after the first reuses the same in-flight/resolved
+// promise instead of re-fetching.
+let accountFieldsPromise = null;
+let contactFieldsPromise = null;
+
+async function loadFieldsMeta(moduleName) {
+  const res = await fetch(`/api/modules/${moduleName}/fields`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  return json.fields || json.data || [];
+}
+
+// Tries an exact-match criteria search first (fast, precise); if that
+// comes back empty or errors — which can happen for account names
+// containing characters the criteria syntax chokes on — falls back to
+// a full-text word search and filters client-side for an exact match
+// on Account_Name.
+async function searchModuleByAccountName(moduleName, accountName) {
+  const criteria = `(Account_Name:equals:${accountName})`;
+  try {
+    const res = await fetch(`/api/modules/${moduleName}/search?criteria=${encodeURIComponent(criteria)}`);
+    if (res.ok) {
+      const json = await res.json();
+      const records = json?.data || [];
+      if (records.length > 0) return records;
+    }
+  } catch {
+    // fall through to word search
+  }
+
+  try {
+    const res = await fetch(`/api/modules/${moduleName}/search?word=${encodeURIComponent(accountName)}`);
+    if (res.ok) {
+      const json = await res.json();
+      const records = json?.data || [];
+      const target = accountName.trim().toLowerCase();
+      return records.filter((r) => {
+        const raw = r.Account_Name;
+        const name = raw && typeof raw === "object" ? raw.name : raw;
+        return String(name || "").trim().toLowerCase() === target;
+      });
+    }
+  } catch {
+    // give up quietly — the section will show "not found"
+  }
+
+  return [];
+}
+
+function InfoField({ label, value }) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-0.5">{label}</p>
+      <p className="text-sm font-medium text-navy-900 break-words">{value || <span className="text-slate-300">--</span>}</p>
+    </div>
+  );
+}
+
+function CompanyContactModule({ accountName }) {
+  const [state, setState] = useState({ loading: true, error: null, account: null, accountFields: [], contacts: [] });
+
+  useEffect(() => {
+    if (!accountName) return;
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true, error: null }));
+
+    (async () => {
+      try {
+        if (!accountFieldsPromise) accountFieldsPromise = loadFieldsMeta("Accounts");
+        if (!contactFieldsPromise) contactFieldsPromise = loadFieldsMeta("Contacts");
+
+        const [accFieldsMeta, contactFieldsMeta, accounts, contacts] = await Promise.all([
+          accountFieldsPromise,
+          contactFieldsPromise,
+          searchModuleByAccountName("Accounts", accountName),
+          searchModuleByAccountName("Contacts", accountName),
+        ]);
+
+        if (cancelled) return;
+
+        const account = accounts[0] || null;
+        const accountFields = account ? resolveFields(account, buildLabelMap(accFieldsMeta), ACCOUNT_INFO_LABELS) : [];
+        const contactLabelMap = buildLabelMap(contactFieldsMeta);
+        const resolvedContacts = contacts.map((c) => ({
+          name: pickValue(c, "Full_Name") || pickValue(c, "Last_Name") || "Contact",
+          fields: resolveFields(c, contactLabelMap, CONTACT_INFO_LABELS),
+        }));
+
+        setState({ loading: false, error: null, account, accountFields, contacts: resolvedContacts });
+      } catch (e) {
+        if (!cancelled) setState((s) => ({ ...s, loading: false, error: e.message }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountName]);
+
+  return (
+    <div className="px-5 sm:px-6 pt-5">
+      <p className="font-display font-semibold text-navy-900 mb-3 text-sm">Company &amp; Contact</p>
+
+      {state.loading && (
+        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-400">
+          Loading from Bigin…
+        </div>
+      )}
+
+      {!state.loading && state.error && (
+        <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-xs text-red-600">
+          Couldn't load company/contact info: {state.error}
+        </div>
+      )}
+
+      {!state.loading && !state.error && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Company */}
+          <div className="rounded-xl border border-slate-100 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <IconBuilding className="w-4 h-4 text-slate-400" />
+              <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Company</p>
+            </div>
+            {!state.account ? (
+              <p className="text-xs text-slate-400">No matching Accounts record found in Bigin.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {state.accountFields.map((f) => (
+                  <InfoField key={f.label} label={f.label} value={f.value} />
+                ))}
+                {state.accountFields.length === 0 && (
+                  <p className="text-xs text-slate-400 col-span-2">No additional fields available.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Contact(s) */}
+          <div className="rounded-xl border border-slate-100 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <IconUsers className="w-4 h-4 text-slate-400" />
+              <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Contact</p>
+            </div>
+            {state.contacts.length === 0 ? (
+              <p className="text-xs text-slate-400">No linked Contacts record found in Bigin.</p>
+            ) : (
+              <div className="space-y-4">
+                {state.contacts.slice(0, 2).map((c, i) => (
+                  <div key={i} className={i > 0 ? "pt-3 border-t border-slate-100" : ""}>
+                    <p className="text-sm font-semibold text-navy-900 mb-2">{c.name}</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {c.fields.map((f) => (
+                        <InfoField key={f.label} label={f.label} value={f.value} />
+                      ))}
+                      {c.fields.length === 0 && (
+                        <p className="text-xs text-slate-400 col-span-2">No additional fields available.</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {state.contacts.length > 2 && (
+                  <p className="text-[11px] text-slate-400">+{state.contacts.length - 2} more contact(s) in Bigin</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -74,8 +315,11 @@ export default function DonorHistoryModal({ open, onClose, donor }) {
         </div>
 
         <div className="overflow-y-auto flex-1">
+          {/* Company & Contact — live from Bigin Accounts/Contacts */}
+          <CompanyContactModule accountName={donor.account} />
+
           {/* Summary strip */}
-          <div className="p-5 sm:p-6 border-b border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="p-5 sm:p-6 border-b border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
             <div>
               <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1">Total Amount</p>
               <p className="font-display text-lg font-bold text-pink-600">{moneyCr(donor.totalAmount)}</p>

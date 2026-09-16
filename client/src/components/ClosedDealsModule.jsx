@@ -40,15 +40,46 @@ function FilterGroup({ label, options, selected, onToggle }) {
   );
 }
 
-function KpiCard({ label, amount, donors, accent = "emerald" }) {
+// Clickable when given an onClick — acts as one of 3 mutually-exclusive
+// scope selectors (FY total / open pipeline / current month), matching
+// the KpiCard/FYCard pattern already used on the Overview page.
+function KpiCard({ label, amount, donors, accent = "emerald", active, onClick }) {
   const theme = { pink: "text-pink-600", navy: "text-navy-700", emerald: "text-emerald-600" }[accent];
+  const clickable = typeof onClick === "function";
+  const Tag = clickable ? "button" : "div";
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+    <Tag
+      type={clickable ? "button" : undefined}
+      onClick={onClick}
+      className={`text-left rounded-2xl border shadow-sm p-5 transition-colors w-full ${
+        active
+          ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200"
+          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200" : "")
+      }`}
+    >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">{label}</p>
-      <p className={`font-display text-2xl font-bold ${theme}`}>{moneyCr(amount)}</p>
+      <p className={`font-display text-2xl font-bold ${active ? "text-pink-600" : theme}`}>{moneyCr(amount)}</p>
       <p className="text-xs text-slate-400 mt-1">{donors} unique donors</p>
-    </div>
+    </Tag>
   );
+}
+
+// Client-side equivalent of the server's groupSummary() — amount sum +
+// distinct donor (Account_Name) count per group value. Used to recompute
+// the breakdown tables client-side when the "Month Conversion" scope is
+// selected, without a second network round trip (that scope is just a
+// filter over data we already have).
+function groupByField(rows, field) {
+  const groups = {};
+  for (const r of rows) {
+    const key = r[field] || "Unspecified";
+    if (!groups[key]) groups[key] = { amount: 0, accounts: new Set() };
+    groups[key].amount += r.amount || 0;
+    if (r.account) groups[key].accounts.add(r.account);
+  }
+  return Object.entries(groups)
+    .map(([name, g]) => ({ name, amount: g.amount, donors: g.accounts.size }))
+    .sort((a, b) => b.amount - a.amount);
 }
 
 // Full-table breakdown card (title + navy-headed table) — used for By
@@ -138,7 +169,7 @@ function downloadCsv(rows) {
   const lines = [header.join(",")];
   rows.forEach((r, i) => {
     lines.push(
-      [i + 1, r.account, r.amount, monthNameOf(r.closingDate) || "", r.type, r.donorType, r.kam, r.spoc]
+      [i + 1, r.account, r.amount, r.monthLabel || "", r.type, r.donorType, r.kam, r.spoc]
         .map(toCsvValue)
         .join(",")
     );
@@ -157,7 +188,7 @@ const PAGE_SIZE = 10;
 // The main "Donor History" table at the bottom of the page: search by
 // name/KAM/SPOC, an optional per-column filter row, CSV export, and
 // numbered pagination — styled after the reference donor-history table.
-function DonorHistoryTable({ rows }) {
+function DonorHistoryTable({ rows, subtitle }) {
   const [search, setSearch] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [colFilters, setColFilters] = useState({ month: "", type: "", donorType: "", kam: "", spoc: "" });
@@ -170,7 +201,7 @@ function DonorHistoryTable({ rows }) {
         const hay = `${r.account} ${r.kam} ${r.spoc}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
-      const month = monthNameOf(r.closingDate) || "";
+      const month = r.monthLabel || "";
       if (colFilters.month && !month.toLowerCase().includes(colFilters.month.toLowerCase())) return false;
       if (colFilters.type && !(r.type || "").toLowerCase().includes(colFilters.type.toLowerCase())) return false;
       if (colFilters.donorType && !(r.donorType || "").toLowerCase().includes(colFilters.donorType.toLowerCase())) return false;
@@ -204,7 +235,7 @@ function DonorHistoryTable({ rows }) {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
         <div>
           <p className="font-display font-bold text-navy-900 text-xl">Donor History</p>
-          <p className="text-sm text-slate-400">A detailed list of donors, their contributions and key details.</p>
+          <p className="text-sm text-slate-400">{subtitle || "A detailed list of donors, their contributions and key details."}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -300,7 +331,7 @@ function DonorHistoryTable({ rows }) {
                   <td className="px-4 py-3 text-right font-bold text-navy-900 whitespace-nowrap" title={fullMoney(r.amount)}>
                     {moneyCr(r.amount)}
                   </td>
-                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{monthNameOf(r.closingDate) || "—"}</td>
+                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.monthLabel || "—"}</td>
                   <td className="px-4 py-3">
                     <Pill value={r.type} theme={TYPE_THEME} />
                   </td>
@@ -363,8 +394,13 @@ function DonorHistoryTable({ rows }) {
 
 const PREV_FY = "2025-2026";
 
-function rupeeTick(v) {
-  return new Intl.NumberFormat("en-IN").format(v || 0);
+// Axis ticks in Crore, matching the "₹ XX.XX Cr" labels already shown
+// on each point — whole numbers stay bare (e.g. "₹80 Cr"), fractional
+// values keep one decimal (e.g. "₹32.7 Cr").
+function crTick(v) {
+  const cr = (v || 0) / 10000000;
+  const formatted = Number.isInteger(cr) ? String(cr) : cr.toFixed(1);
+  return `₹${formatted} Cr`;
 }
 
 // Always-visible value label above (green/current-FY) or below
@@ -429,10 +465,10 @@ function ConversionTrendChart({ chartData, currentFY, prevFY }) {
             label={{ value: "Actual Conversion Month", position: "insideBottom", offset: -18, fill: "#64748b", fontSize: 12 }}
           />
           <YAxis
-            tickFormatter={rupeeTick}
+            tickFormatter={crTick}
             tick={{ fontSize: 11, fill: "#64748b" }}
             width={90}
-            label={{ value: "Sum of Amount", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 12 }}
+            label={{ value: "Sum of Amount (₹ Cr)", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 12 }}
           />
           <Tooltip content={<TrendTooltip />} cursor={{ stroke: "#94a3b8", strokeDasharray: "3 3" }} />
           <Line
@@ -483,6 +519,19 @@ export default function CloseddonorsModule() {
   // Cash / Kind / School Engagement filter. null = everything selected.
   const [filterOptions, setFilterOptions] = useState({ types: [] });
   const [selectedTypes, setSelectedTypes] = useState(null);
+
+  // Which of the 3 top KPI cards is the active data scope — everything
+  // below (breakdown tables, month-wise table, Donor History) follows
+  // whichever is selected, same idea as the FY cards on the Overview
+  // page. "fy" is the whole-year closed total (the page's original
+  // default view), "pipeline" swaps in the open Standard Pipeline for
+  // this FY, "month" narrows down to just the current month's closed
+  // deals.
+  const [scope, setScope] = useState("fy"); // "fy" | "pipeline" | "month"
+
+  const [pipelineData, setPipelineData] = useState(null);
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [pipelineError, setPipelineError] = useState(null);
 
   const toggleType = (value) => {
     setSelectedTypes((current) => {
@@ -537,6 +586,74 @@ export default function CloseddonorsModule() {
         /* Chart just renders with the current-FY line only if this fails. */
       });
   }, [selectedTypes]);
+
+  // The open-pipeline breakdown is only fetched once the "Total
+  // Pipeline" card is actually selected — no point paying for it
+  // up front when the page defaults to the FY-total scope.
+  useEffect(() => {
+    if (scope !== "pipeline") return;
+    setPipelineLoading(true);
+    setPipelineError(null);
+    const params = new URLSearchParams({ fy: FY });
+    if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    fetch(`/api/crm-analysis/standard-pipeline?${params.toString()}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(setPipelineData)
+      .catch((e) => setPipelineError(e.message))
+      .finally(() => setPipelineLoading(false));
+  }, [scope, selectedTypes]);
+
+  // The data actually driving the breakdown tables / month-wise table /
+  // Donor History — swaps with the selected scope. "month" is derived
+  // client-side from the already-loaded closed-donors data (it's just a
+  // filter over what we have); "pipeline" waits on pipelineData above.
+  const scoped = useMemo(() => {
+    if (!data) return null;
+
+    if (scope === "month") {
+      const monthRows = data.table
+        .filter((r) => monthNameOf(r.closingDate) === data.currentMonth.name)
+        .map((r) => ({ ...r, monthLabel: monthNameOf(r.closingDate) }));
+      return {
+        label: `${data.currentMonth.name} only`,
+        monthColumnLabel: "Month",
+        byPlatform: groupByField(monthRows, "platform"),
+        byDonorType: groupByField(monthRows, "donorType"),
+        byKAM: groupByField(monthRows, "kam"),
+        monthWise: data.monthWise.filter((m) => m.name === data.currentMonth.name),
+        table: monthRows,
+      };
+    }
+
+    if (scope === "pipeline") {
+      if (!pipelineData) return null;
+      return {
+        label: `FY ${pipelineData.fy} open pipeline`,
+        monthColumnLabel: "Expected Conversion Month",
+        byPlatform: pipelineData.byPlatform,
+        byDonorType: pipelineData.byDonorType,
+        byKAM: pipelineData.byKAM,
+        monthWise: pipelineData.monthWise,
+        table: pipelineData.table.map((r) => ({
+          ...r,
+          monthLabel: r.expectedMonth && r.expectedMonth !== "Unspecified" ? r.expectedMonth : null,
+        })),
+      };
+    }
+
+    return {
+      label: `FY ${data.fy}, full year`,
+      monthColumnLabel: "Month",
+      byPlatform: data.byPlatform,
+      byDonorType: data.byDonorType,
+      byKAM: data.byKAM,
+      monthWise: data.monthWise,
+      table: data.table.map((r) => ({ ...r, monthLabel: monthNameOf(r.closingDate) })),
+    };
+  }, [data, scope, pipelineData]);
 
   const chartData = useMemo(() => {
     if (!data) return [];
@@ -595,69 +712,106 @@ export default function CloseddonorsModule() {
           amount={data.totals.amount}
           donors={data.totals.donors}
           accent="emerald"
+          active={scope === "fy"}
+          onClick={() => setScope("fy")}
         />
         <KpiCard
           label={`Total Pipeline ${data.fy}`}
           amount={data.pipelineTotals.amount}
           donors={data.pipelineTotals.donors}
           accent="pink"
+          active={scope === "pipeline"}
+          onClick={() => setScope("pipeline")}
         />
         <KpiCard
           label={`${data.currentMonth.name} Month Conversion`}
           amount={data.currentMonth.amount}
           donors={data.currentMonth.donors}
           accent="navy"
+          active={scope === "month"}
+          onClick={() => setScope("month")}
         />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 items-start">
-        <div className="flex flex-col gap-4">
-          <BreakdownTable title="By Platform" nameLabel="Platform" rows={data.byPlatform} />
-          <BreakdownTable title="By Donor Type" nameLabel="Donor Type" rows={data.byDonorType} />
+      {scope === "pipeline" && pipelineLoading && (
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 text-center text-slate-400 text-sm">
+          Loading open pipeline…
         </div>
-        <BreakdownTable title="By KAM" nameLabel="KAM" rows={data.byKAM} />
-      </div>
+      )}
 
-      <div className="grid gap-4 lg:grid-cols-[auto,1fr] items-start">
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden self-start">
-          <div className="bg-navy-900 text-white px-5 py-2.5">
-            <p className="font-display font-semibold text-xs whitespace-nowrap">
-              Month-wise conversion (FY {data.fy})
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                  <th className="pl-5 pr-6 py-2 font-semibold whitespace-nowrap">Month</th>
-                  <th className="pr-6 py-2 font-semibold text-right whitespace-nowrap">Amount</th>
-                  <th className="pr-5 py-2 font-semibold text-right whitespace-nowrap">Donors</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.monthWise.map((m, i) => (
-                  <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                    <td className="pl-5 pr-6 py-2 text-navy-900 font-medium whitespace-nowrap">{m.name}</td>
-                    <td className="pr-6 py-2 text-right whitespace-nowrap">{moneyCr(m.amount)}</td>
-                    <td className="pr-5 py-2 text-right text-slate-500 whitespace-nowrap">{m.donors}</td>
-                  </tr>
-                ))}
-                {data.monthWise.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
-                      No closed donors this FY
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+      {scope === "pipeline" && pipelineError && (
+        <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
+          Couldn't load open pipeline: {pipelineError}
         </div>
+      )}
 
-        <ConversionTrendChart chartData={chartData} currentFY={data.fy} prevFY={PREV_FY} />
-      </div>
+      {scoped && (
+        <>
+          <p className="text-xs text-slate-400 -mb-2">
+            Showing: <span className="font-semibold text-navy-700">{scoped.label}</span>
+          </p>
 
-      <DonorHistoryTable rows={data.table} />
+          <div className="grid gap-4 md:grid-cols-2 items-start">
+            <div className="flex flex-col gap-4">
+              <BreakdownTable title="By Platform" nameLabel="Platform" rows={scoped.byPlatform} />
+              <BreakdownTable title="By Donor Type" nameLabel="Donor Type" rows={scoped.byDonorType} />
+            </div>
+            <BreakdownTable title="By KAM" nameLabel="KAM" rows={scoped.byKAM} />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[auto,1fr] items-start">
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden self-start">
+              <div className="bg-navy-900 text-white px-5 py-2.5">
+                <p className="font-display font-semibold text-xs whitespace-nowrap">
+                  {scope === "pipeline"
+                    ? `Month-wise pipeline (Expected Conversion, FY ${pipelineData?.fy || data.fy})`
+                    : scope === "month"
+                    ? `Month-wise conversion — ${data.currentMonth.name} only`
+                    : `Month-wise conversion (FY ${data.fy})`}
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                      <th className="pl-5 pr-6 py-2 font-semibold whitespace-nowrap">Month</th>
+                      <th className="pr-6 py-2 font-semibold text-right whitespace-nowrap">Amount</th>
+                      <th className="pr-5 py-2 font-semibold text-right whitespace-nowrap">Donors</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scoped.monthWise.map((m, i) => (
+                      <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
+                        <td className="pl-5 pr-6 py-2 text-navy-900 font-medium whitespace-nowrap">{m.name}</td>
+                        <td className="pr-6 py-2 text-right whitespace-nowrap">{moneyCr(m.amount)}</td>
+                        <td className="pr-5 py-2 text-right text-slate-500 whitespace-nowrap">{m.donors}</td>
+                      </tr>
+                    ))}
+                    {scoped.monthWise.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
+                          No data for this scope
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <ConversionTrendChart chartData={chartData} currentFY={data.fy} prevFY={PREV_FY} />
+          </div>
+
+          <DonorHistoryTable
+            rows={scoped.table}
+            subtitle={
+              scope === "fy"
+                ? "A detailed list of donors, their contributions and key details."
+                : `Scoped to: ${scoped.label}.`
+            }
+          />
+        </>
+      )}
     </div>
   );
 }

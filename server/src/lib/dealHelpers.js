@@ -45,6 +45,18 @@ export function isApprovedByRajesh(deal) {
   return false;
 }
 
+// A Standard Pipeline deal counts as genuine, forecastable open pipeline
+// — matching the Overview page's "Pipeline 2026-2027" card — only once
+// Rajesh has approved it and it hasn't stalled into a Lost or On Hold
+// stage. Every pipeline total, breakdown, and table across the dashboard
+// (Overview, Conversion, and the Pipeline page itself) should agree on
+// this same rule rather than each computing its own definition of
+// "pipeline".
+export function isApprovedOpenPipeline(deal) {
+  const stage = pick(deal, "Stage", "").toLowerCase();
+  return isApprovedByRajesh(deal) && !stage.includes("lost") && !stage.includes("on hold");
+}
+
 // Distinct donor count by Account_Name. Uses the lookup's id when present
 // (more reliable than name, which can have casing/whitespace variants),
 // falling back to the stringified name.
@@ -329,7 +341,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
 // deal in fy2 (any type) — a donor can be "Engaged" overall while still
 // showing "-" on a specific type row they didn't repeat.
 export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
-  const byDonor = {}; // donorKey -> { account, byFY: { [fy]: { [type]: {amount, kam, platform, spoc, donorType} } } }
+  const byDonor = {}; // donorKey -> { account, byFY: { [fy]: { [type]: {amount, deals, kam, platform, spoc, donorType} } } }
 
   for (const d of donors) {
     const key = uniqueDonorKey(d);
@@ -339,10 +351,17 @@ export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
     if (!byDonor[key]) byDonor[key] = { account: pick(d, "Account_Name"), byFY: {} };
     if (!byDonor[key].byFY[fy]) byDonor[key].byFY[fy] = {};
     if (!byDonor[key].byFY[fy][type]) {
-      byDonor[key].byFY[fy][type] = { amount: 0 };
+      byDonor[key].byFY[fy][type] = { amount: 0, deals: [] };
     }
     const bucket = byDonor[key].byFY[fy][type];
-    bucket.amount += pickNumber(d, "Amount");
+    const dealAmount = pickNumber(d, "Amount");
+    bucket.amount += dealAmount;
+    // Every individual deal in this (donor, FY, Type) bucket, kept
+    // alongside the running total — a donor can have several deals of
+    // the same Type in one FY (e.g. two separate Cash gifts in the same
+    // month), and the comparison table needs to show each one rather
+    // than collapsing them into a single "last deal wins" month.
+    bucket.deals.push({ amount: dealAmount, month: monthNameOf(d.Closing_Date), closingDate: d.Closing_Date || null });
     // Last deal seen wins for these donor-attribute fields — a reasonable
     // "most recent" proxy since we don't have a definitive record here.
     bucket.kam = pick(d, "Pipeline_KAM");
@@ -351,7 +370,8 @@ export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
     bucket.donorType = pick(d, "Type_of_donor");
     bucket.category = pick(d, "Category");
     // Last deal's closing month wins too, same "most recent" proxy as
-    // kam/platform/spoc/donorType above.
+    // kam/platform/spoc/donorType above — kept for filtering/sorting on
+    // this column; the full per-deal breakdown lives in bucket.deals.
     bucket.month = monthNameOf(d.Closing_Date);
   }
 
@@ -375,6 +395,16 @@ export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
     const expectedMonth = pick(d, "Expected_Conversion_Month", null);
     if (expectedMonth) pipelineByDonorType[key][type].months.add(expectedMonth);
   }
+
+// Most-recent-first (by real closing date), matching the Donor History
+// popup's convention — nulls sink to the end.
+function sortDealsDesc(deals) {
+  return [...(deals || [])].sort((a, b) => {
+    const da = a.closingDate ? new Date(a.closingDate).getTime() : -Infinity;
+    const db = b.closingDate ? new Date(b.closingDate).getTime() : -Infinity;
+    return db - da;
+  });
+}
 
   const rows = [];
   for (const [donorKey, info] of Object.entries(byDonor)) {
@@ -404,9 +434,16 @@ export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
         fy1Amount,
         fy1Type: fy1Amount != null ? type : null,
         fy1Month: a1 ? a1.month : null,
+        // Per-deal breakdown behind fy1Amount/fy1Month above — a donor
+        // can have several deals of the same Type in one FY (e.g. two
+        // Cash gifts in the same or different months), and the table
+        // shows each one individually instead of just the combined
+        // total + last-deal month.
+        fy1Deals: a1 ? sortDealsDesc(a1.deals).map((x) => ({ amount: x.amount, month: x.month })) : [],
         fy2Amount,
         fy2Type: fy2Amount != null ? type : null,
         fy2Month: a2 ? a2.month : null,
+        fy2Deals: a2 ? sortDealsDesc(a2.deals).map((x) => ({ amount: x.amount, month: x.month })) : [],
         diffAmount,
         absDiffAmount: diffAmount != null ? Math.abs(diffAmount) : null,
         diffPct,

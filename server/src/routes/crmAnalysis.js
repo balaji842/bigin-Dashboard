@@ -18,7 +18,7 @@ import {
   buildEngagementComparison,
   buildTypePlatformBreakdown,
   STANDARD_TYPES,
-  isApprovedByRajesh,
+  isApprovedOpenPipeline,
 } from "../lib/dealHelpers.js";
 import { getTargetsFor, setTarget } from "../lib/targetsStore.js";
 
@@ -65,12 +65,16 @@ router.get("/crm-analysis/filter-options", async (_req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
-// GET /api/crm-analysis/overview?fy=2025-2026&types=Cash,Kind
+// GET /api/crm-analysis/overview?fy=2025-2026&types=Cash,Kind&donorType=NPO
 // fy can also be "ALL", meaning "every fiscal year combined" — used by the
 // clickable "Total Conversion FY 2022-2027" card on the Overview page.
+// donorType is a single value from the "By Donor Type" cards (e.g. "NPO") —
+// clicking one of those cards scopes every other card/table on the page to
+// just that donor type, the same way the Type pills already do for "Type".
 router.get("/crm-analysis/overview", async (req, res) => {
   const currentFY = req.query.fy || "ALL";
   const selectedTypes = parseListParam(req.query.types);
+  const selectedDonorType = req.query.donorType || null;
 
   try {
     const donors = await fetchAllRecords("Pipelines");
@@ -80,8 +84,22 @@ router.get("/crm-analysis/overview", async (req, res) => {
       filtereddonors = filtereddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
     }
 
-    const closeddonors = filtereddonors.filter(isClosed);
-    const standarddonors = filtereddonors.filter(isStandardPipeline);
+    // Everything below reacts to the donor-type selection EXCEPT the "By
+    // Donor Type" cards themselves — those stay computed from the
+    // pre-donor-type-filter set (closeddonorsBase/closedThisFYBase) so all
+    // of them keep showing up as clickable options even while one is
+    // selected, instead of collapsing down to a single card.
+    const closeddonorsBase = filtereddonors.filter(isClosed);
+
+    let filtereddonorsForData = filtereddonors;
+    if (selectedDonorType) {
+      filtereddonorsForData = filtereddonorsForData.filter(
+        (d) => pick(d, "Type_of_donor") === selectedDonorType
+      );
+    }
+
+    const closeddonors = filtereddonorsForData.filter(isClosed);
+    const standarddonors = filtereddonorsForData.filter(isStandardPipeline);
 
     // "ALL" scopes Month-wise / By Donor Type to every closed deal across
     // every fiscal year, instead of narrowing to a single selected FY.
@@ -90,18 +108,18 @@ router.get("/crm-analysis/overview", async (req, res) => {
         ? closeddonors
         : closeddonors.filter((d) => pick(d, "Fiscal_year", "") === currentFY);
 
-    const pipeline2027Approved = standarddonors.filter((d) => {
-      const stage = pick(d, "Stage", "").toLowerCase();
-      return (
-        pick(d, "Fiscal_year", "") === "2026-2027" &&
-        isApprovedByRajesh(d) &&
-        !stage.includes("lost") &&
-        !stage.includes("on hold")
-      );
-    });
+    const closedThisFYBase =
+      currentFY === "ALL"
+        ? closeddonorsBase
+        : closeddonorsBase.filter((d) => pick(d, "Fiscal_year", "") === currentFY);
+
+    const pipeline2027Approved = standarddonors.filter(
+      (d) => pick(d, "Fiscal_year", "") === "2026-2027" && isApprovedOpenPipeline(d)
+    );
 
     res.json({
       fy: currentFY,
+      donorType: selectedDonorType,
       closed: {
         allTime: totalsFor(closeddonors),
         thisFY: totalsFor(closedThisFY),
@@ -118,14 +136,17 @@ router.get("/crm-analysis/overview", async (req, res) => {
         .sort((a, b) => a.name.localeCompare(b.name)),
 
       // Both of these now follow whichever scope is selected (one FY, or
-      // "ALL" for everything combined) via closedThisFY above.
+      // "ALL" for everything combined) via closedThisFY above, AND the
+      // donor-type selection.
       monthWise: monthWiseSummary(closedThisFY, "Closing_Date"),
 
-      byDonorType: groupSummary(closedThisFY, "Type_of_donor"),
+      // Computed from the donor-type-UNfiltered set so every card stays
+      // visible and clickable regardless of which one is currently active.
+      byDonorType: groupSummary(closedThisFYBase, "Type_of_donor"),
 
       // Raw rows for the filterable table at the bottom of the module.
       // Kept lean — just what the table needs to display + filter on.
-      table: filtereddonors.map((d) => ({
+      table: filtereddonorsForData.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
         amount: Number(d.Amount) || 0,
@@ -168,8 +189,13 @@ router.get("/crm-analysis/closed-donors", async (req, res) => {
     const closedThisFY = closeddonors.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
     );
+    // Same "approved by Rajesh, not Lost/On Hold" rule as the Overview
+    // page's Pipeline card (see isApprovedOpenPipeline) — this is what
+    // the "Total Pipeline" KPI card on the Conversion page shows, so it
+    // needs to agree with Overview's number rather than counting every
+    // open deal regardless of approval/stage.
     const standardThisFY = standarddonors.filter(
-      (d) => pick(d, "Fiscal_year", "") === currentFY
+      (d) => pick(d, "Fiscal_year", "") === currentFY && isApprovedOpenPipeline(d)
     );
 
     // Every FY present in the closed data, kept for reference even though
@@ -239,6 +265,12 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
     if (selectedTypes && selectedTypes.length > 0) {
       standarddonors = standarddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
     }
+    // Same "approved by Rajesh, not Lost/On Hold" rule as the Overview
+    // page's Pipeline card (see isApprovedOpenPipeline) — applied here so
+    // every card, breakdown table, and the Donor History table on this
+    // page all agree with Overview's "Pipeline 2026-2027" number instead
+    // of each computing its own definition of "pipeline".
+    standarddonors = standarddonors.filter(isApprovedOpenPipeline);
     const standardThisFY = standarddonors.filter(
       (d) => pick(d, "Fiscal_year", "") === currentFY
     );

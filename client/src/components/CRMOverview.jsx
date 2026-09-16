@@ -41,15 +41,27 @@ function FYCard({ year, amount, donors, active, onClick }) {
   );
 }
 
-function MiniStatCard({ name, amount, donors }) {
+function MiniStatCard({ name, amount, donors, active, onClick }) {
+  const clickable = typeof onClick === "function";
+  const Tag = clickable ? "button" : "div";
   return (
-    <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 min-w-0">
+    <Tag
+      type={clickable ? "button" : undefined}
+      onClick={onClick}
+      className={`text-left rounded-xl border shadow-sm p-4 min-w-0 w-full transition-colors ${
+        active
+          ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200"
+          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200" : "")
+      }`}
+    >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2 break-words" title={name}>
         {name}
       </p>
-      <p className="font-display text-lg font-bold text-navy-900">{moneyCr(amount)}</p>
+      <p className={`font-display text-lg font-bold ${active ? "text-pink-600" : "text-navy-900"}`}>
+        {moneyCr(amount)}
+      </p>
       <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} donors</p>
-    </div>
+    </Tag>
   );
 }
 
@@ -165,6 +177,11 @@ export default function CRMOverview() {
 
   const [typeOptions, setTypeOptions] = useState([]);
   const [selectedTypes, setSelectedTypes] = useState(null);
+  const [selectedDonorType, setSelectedDonorType] = useState(null);
+
+  const toggleDonorType = (name) => {
+    setSelectedDonorType((prev) => (prev === name ? null : name));
+  };
 
   useEffect(() => {
     fetch("/api/crm-analysis/filter-options")
@@ -188,6 +205,7 @@ export default function CRMOverview() {
     setError(null);
     const params = new URLSearchParams({ fy });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    if (selectedDonorType) params.set("donorType", selectedDonorType);
     fetch(`/api/crm-analysis/overview?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -196,7 +214,7 @@ export default function CRMOverview() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [fy, selectedTypes]);
+  }, [fy, selectedTypes, selectedDonorType]);
 
   const monthDonors = useMemo(() => {
     if (!data || !modalMonth) return [];
@@ -280,58 +298,80 @@ export default function CRMOverview() {
         </div>
       </div>
 
-      <div>
-        <p className="font-display font-semibold text-navy-900 text-sm">By Donor Type</p>
-        <p className="text-xs text-slate-400 mb-3">
-          {data.fy === "ALL" ? "Across all fiscal years (2022-2027)" : `FY ${data.fy}`}
-        </p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {data.byDonorType.map((r) => (
-            <MiniStatCard key={r.name} name={r.name} amount={r.amount} donors={r.donors} />
-          ))}
-          {data.byDonorType.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="bg-navy-900 text-white px-5 py-3">
-          <p className="font-display font-semibold text-sm">
-            {data.fy === "ALL"
-              ? "Month-wise (All Fiscal Years, 2022-2027 combined)"
-              : `Month-wise (FY ${data.fy}) — April to March`}
-          </p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[500px]">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                <th className="px-4 py-2 font-semibold">Month</th>
-                <th className="px-4 py-2 font-semibold text-right">Amount</th>
-                <th className="px-4 py-2 font-semibold text-right">Donors</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.monthWise.map((m, i) => (
-                <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                  <td className="px-4 py-2 text-navy-900 font-medium">{m.name}</td>
-                  <td className="px-4 py-2 text-right">{moneyCr(m.amount)}</td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={() => m.donors > 0 && setModalMonth(m.name)}
-                      disabled={m.donors === 0}
-                      className={`font-semibold ${
-                        m.donors > 0
-                          ? "text-emerald-600 underline hover:text-emerald-700"
-                          : "text-slate-300"
-                      }`}
-                    >
-                      {m.donors}
-                    </button>
-                  </td>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 items-start">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="bg-navy-900 text-white px-5 py-3">
+            <p className="font-display font-semibold text-sm">
+              {data.fy === "ALL"
+                ? "Month-wise (All Fiscal Years, 2022-2027 combined)"
+                : `Month-wise (FY ${data.fy}) — April to March`}
+              {selectedDonorType ? ` · ${selectedDonorType}` : ""}
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[500px]">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                  <th className="px-4 py-2 font-semibold">Month</th>
+                  <th className="px-4 py-2 font-semibold text-right">Amount</th>
+                  <th className="px-4 py-2 font-semibold text-right">Donors</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.monthWise.map((m, i) => (
+                  <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
+                    <td className="px-4 py-2 text-navy-900 font-medium">{m.name}</td>
+                    <td className="px-4 py-2 text-right">{moneyCr(m.amount)}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={() => m.donors > 0 && setModalMonth(m.name)}
+                        disabled={m.donors === 0}
+                        className={`font-semibold ${
+                          m.donors > 0
+                            ? "text-emerald-600 underline hover:text-emerald-700"
+                            : "text-slate-300"
+                        }`}
+                      >
+                        {m.donors}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="lg:col-span-1">
+          <div className="flex items-center justify-between mb-1">
+            <p className="font-display font-semibold text-navy-900 text-sm">By Donor Type</p>
+            {selectedDonorType && (
+              <button
+                type="button"
+                onClick={() => setSelectedDonorType(null)}
+                className="text-xs text-pink-600 font-semibold hover:underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-slate-400 mb-3">
+            {data.fy === "ALL" ? "Across all fiscal years (2022-2027)" : `FY ${data.fy}`}
+            {" · click a card to filter"}
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {data.byDonorType.map((r) => (
+              <MiniStatCard
+                key={r.name}
+                name={r.name}
+                amount={r.amount}
+                donors={r.donors}
+                active={selectedDonorType === r.name}
+                onClick={() => toggleDonorType(r.name)}
+              />
+            ))}
+            {data.byDonorType.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
+          </div>
         </div>
       </div>
 
