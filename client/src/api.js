@@ -15,8 +15,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     }).then(handle),
-  summary: () => fetch(`${BASE}/analytics/summary`).then(handle),
   moduleRecords: (module) => fetch(`${BASE}/modules/${module}`).then(handle),
+  refreshPipelines: () => fetch(`${BASE}/crm-analysis/refresh`, { method: "POST" }).then(handle),
   coql: (select_query) =>
     fetch(`${BASE}/coql`, {
       method: "POST",

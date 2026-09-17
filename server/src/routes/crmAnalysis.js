@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { fetchAllRecords } from "../zohoClient.js";
+import { getPipelines, invalidatePipelinesCache, pipelinesCacheInfo } from "../lib/pipelinesCache.js";
 import {
   pick,
   pickNumber,
@@ -45,11 +45,28 @@ const router = Router();
 // GET /api/crm-analysis/filter-options
 // Distinct Type/KAM/SPOC/Platform values across every deal (closed and
 // standard pipeline both), for populating the FY Comparison filter pills.
+// POST /api/crm-analysis/refresh
+// Forces the next data request on ANY /crm-analysis/* route to pull
+// fresh from Zoho instead of reusing the cached snapshot — this is what
+// the "Refresh live data" button in the sidebar should call. Pre-warms
+// the cache immediately (rather than just invalidating and letting the
+// next page request pay the cost) so the button's own loading spinner
+// reflects the actual Zoho round-trip.
+router.post("/crm-analysis/refresh", async (_req, res) => {
+  try {
+    invalidatePipelinesCache();
+    const donors = await getPipelines({ force: true });
+    res.json({ ok: true, count: donors.length, ...pipelinesCacheInfo() });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // Kept as its own lightweight call so the filter lists stay complete even
 // while the person has other filters narrowed down elsewhere in the UI.
 router.get("/crm-analysis/filter-options", async (_req, res) => {
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     const distinct = (field) =>
       [...new Set(donors.map((d) => pick(d, field)))].sort((a, b) => a.localeCompare(b));
 
@@ -83,7 +100,7 @@ router.get("/crm-analysis/overview", async (req, res) => {
   const selectedDonorTypes = parseListParam(req.query.donorTypes);
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
 
     let filtereddonors = donors;
     if (selectedTypes && selectedTypes.length > 0) {
@@ -199,7 +216,7 @@ router.get("/crm-analysis/closed-donors", async (req, res) => {
   const selectedTypes = parseListParam(req.query.types);
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     let closeddonors = donors.filter(isClosed);
     let standarddonors = donors.filter(isStandardPipeline);
     if (selectedTypes && selectedTypes.length > 0) {
@@ -281,7 +298,7 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
   const selectedTypes = parseListParam(req.query.types);
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     let standarddonors = donors.filter(isStandardPipeline);
     if (selectedTypes && selectedTypes.length > 0) {
       standarddonors = standarddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
@@ -367,7 +384,7 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
   };
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     const closeddonors = applyFilters(donors.filter(isClosed), filters);
     const standarddonors = applyFilters(donors.filter(isStandardPipeline), filters);
 
@@ -506,7 +523,8 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
 //
 // Donor-level drilldown for one month's Difference cell in the By Month
 // table. Buckets every donor active around that month into 4 groups:
-//   - matching: gave in this month in both fy1 and fy2
+//   - matching: gave in this month in both fy1 and fy2 (or gave again
+//               anywhere else in fy2 — see buildMonthDonorBreakdown)
 //   - missing:  gave in this month in fy1, gave nothing anywhere in fy2 (to date)
 //   - new:      gave in this month in fy2, and either gave in fy1 in a
 //               different month (timing shift) or has no prior history at all
@@ -529,7 +547,7 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
   };
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     const closeddonors = applyFilters(donors.filter(isClosed), filters);
 
     const breakdown = buildMonthDonorBreakdown(closeddonors, fy1, fy2, month);
@@ -573,7 +591,7 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
   };
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     const closeddonors = applyFilters(donors.filter(isClosed), filters);
     const fyDonors = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy);
 
@@ -651,7 +669,7 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
   const fy2 = req.query.fy2 || "2026-2027";
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     const closeddonors = donors.filter(isClosed);
     const standarddonors = donors.filter(isStandardPipeline);
     const rows = buildEngagementComparison(closeddonors, standarddonors, fy1, fy2);
@@ -693,7 +711,7 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
   }
 
   try {
-    const donors = await fetchAllRecords("Pipelines");
+    const donors = await getPipelines();
     const matchesFilters = (d) =>
       (kam === "ALL" || pick(d, "Pipeline_KAM") === kam) &&
       (!spoc || pick(d, "Spoc") === spoc) &&

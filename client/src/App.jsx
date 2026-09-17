@@ -34,7 +34,6 @@ const PAGE_TITLES = {
 };
 
 export default function App() {
-  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -45,10 +44,17 @@ export default function App() {
   const loadSummary = () => {
     setLoading(true);
     setError(null);
+    // Refreshes the shared Pipelines cache every /crm-analysis/* route
+    // reads from (see server/src/lib/pipelinesCache.js) — this used to
+    // call a disconnected /analytics/summary endpoint whose result
+    // wasn't shown anywhere and did nothing to speed up the actual
+    // dashboard pages. Now the button (and the initial page load) both
+    // warm the exact cache Overview/Conversion/Pipeline/etc. all share,
+    // so a manual refresh actually pulls fresh data instead of just
+    // wasting a redundant Zoho round-trip.
     api
-      .summary()
-      .then((data) => {
-        setSummary(data);
+      .refreshPipelines()
+      .then(() => {
         setLastUpdated(new Date().toLocaleTimeString());
       })
       .catch((err) => setError(err.message))
