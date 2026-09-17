@@ -258,17 +258,27 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
     const inFY2Any = fy2All.length > 0;
     const inOther = otherYearEntries.length > 0;
 
-    if (inFY1Month && inFY2Month) {
+    if (inFY1Month && inFY2Any) {
+      // Matching means "gave in FY1's clicked month AND gave again
+      // somewhere in FY2" — not necessarily the SAME month. A donor who
+      // gave in April 2025-2026 and again in July 2026-2027 still
+      // counts as matching (they came back), just in a different month
+      // — that's exactly what the new Month column below is for. Using
+      // fy2All (every FY2 entry for this donor) rather than just
+      // fy2Month means their full FY2 giving shows here even when it
+      // spans more than one month.
       const a1 = aggregate(fy1Month);
-      const a2 = aggregate(fy2Month);
+      const a2 = aggregate(fy2All);
       const diffAmount = a2.amount - a1.amount;
       const diffPct = a1.amount > 0 ? (diffAmount / a1.amount) * 100 : a2.amount > 0 ? 100 : null;
       matching.push({
         account: info.account,
         fy1Amount: a1.amount,
         fy1Type: a1.type,
+        fy1Month: a1.month,
         fy2Amount: a2.amount,
         fy2Type: a2.type,
+        fy2Month: a2.month,
         diffAmount,
         diffPct,
         kam: a2.kam,

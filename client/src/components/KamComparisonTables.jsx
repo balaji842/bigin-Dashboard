@@ -103,23 +103,31 @@ function BalanceRow({ typeLayout, targets, conversion, pipeline }) {
   );
 }
 
-function TargetRow({ typeLayout, targets, onChange, onBlur }) {
+function TargetRow({ typeLayout, targets, onChange, onBlur, readOnly }) {
   const grandTotal = typeLayout.reduce((s, { type }) => s + (targets[type] || 0), 0);
   const anySet = typeLayout.some(({ type }) => targets[type] != null);
   return (
     <tr className="bg-amber-50">
-      <td className={`${CELL} text-left font-semibold text-amber-800 whitespace-nowrap`}>Target</td>
+      <td className={`${CELL} text-left font-semibold text-amber-800 whitespace-nowrap`}>
+        Target{readOnly ? " (combined)" : ""}
+      </td>
       {typeLayout.map(({ type, platforms }) => (
         <td key={type} colSpan={platforms.length * 2 + 2} className={`${CELL} text-center`}>
-          <input
-            type="number"
-            step="0.01"
-            value={targets[type] ?? ""}
-            placeholder="0.00"
-            onChange={(e) => onChange(type, e.target.value === "" ? null : Number(e.target.value))}
-            onBlur={() => onBlur(type)}
-            className="w-20 text-center text-sm font-semibold text-amber-800 bg-white border border-amber-300 rounded-sm px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-amber-300"
-          />
+          {readOnly ? (
+            <span className="text-sm font-semibold text-amber-800">
+              {targets[type] != null ? fmt(targets[type]) : <span className="text-slate-400 font-normal text-xs">—</span>}
+            </span>
+          ) : (
+            <input
+              type="number"
+              step="0.01"
+              value={targets[type] ?? ""}
+              placeholder="0.00"
+              onChange={(e) => onChange(type, e.target.value === "" ? null : Number(e.target.value))}
+              onBlur={() => onBlur(type)}
+              className="w-20 text-center text-sm font-semibold text-amber-800 bg-white border border-amber-300 rounded-sm px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-amber-300"
+            />
+          )}
         </td>
       ))}
       <td className={`${CELL} text-right font-bold text-amber-800`}>
@@ -142,12 +150,14 @@ function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChang
   // School Engagement donors still shows P1/P2/P3, just zero-filled,
   // rather than silently dropping those columns.
   const typeLayout = types.map((type) => ({ type, platforms: allPlatforms }));
+  const isAllKam = kam === "ALL";
+  const kamLabel = isAllKam ? "All KAM" : kam;
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
       <div className="bg-gradient-to-r from-indigo-600 to-blue-500 text-white px-4 sm:px-5 py-3">
         <p className="font-display font-semibold text-sm">
-          Comparison of &quot;{kam}&quot; for the year {fy}
+          Comparison of &quot;{kamLabel}&quot; for the year {fy}
         </p>
       </div>
       <div className="overflow-x-auto p-3">
@@ -163,7 +173,13 @@ function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChang
               <th className={`${CELL} bg-slate-100 font-bold text-navy-900 align-middle`}>Total</th>
 </tr>
 {mode === "current" && (
-  <TargetRow typeLayout={typeLayout} targets={targets} onChange={onTargetChange} onBlur={onTargetBlur} />
+  <TargetRow
+    typeLayout={typeLayout}
+    targets={targets}
+    onChange={onTargetChange}
+    onBlur={onTargetBlur}
+    readOnly={isAllKam}
+  />
 )}
             <tr>
               <th className={`${CELL} text-left bg-slate-50 font-semibold text-slate-500`}>Platform</th>
@@ -241,7 +257,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
         setAllPlatforms(json.platforms || []);
         setSpocs(json.spocs || []);
         setDonorTypes(json.donorTypes || []);
-        if ((json.kams || []).length > 0) setSelectedKam((prev) => prev ?? json.kams[0]);
+        if ((json.kams || []).length > 0) setSelectedKam((prev) => prev ?? "ALL");
       })
       .catch(() => {
         /* KAM dropdown just stays empty — non-fatal */
@@ -304,6 +320,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
               onChange={(e) => setSelectedKam(e.target.value)}
               className="text-sm border border-slate-200 rounded-lg px-3 py-2 max-w-xs w-full"
             >
+              <option value="ALL">All KAM</option>
               {kams.map((k) => (
                 <option key={k} value={k}>{k}</option>
               ))}

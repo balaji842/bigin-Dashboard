@@ -52,3 +52,29 @@ export function setTarget(fy, kam, type, value) {
   writeAll(all);
   return value;
 }
+
+// Sums every real KAM's target for one fiscal year + type — powers the
+// "All KAM" aggregate view's read-only Target row. Scans all stored
+// entries rather than requiring the caller to pass a KAM list, so it
+// stays correct even if a KAM has a target set but no longer shows up
+// in the current CRM data. Never includes an "ALL" entry itself (there
+// isn't one — targets are never written under that key), so there's no
+// risk of double-counting if this function is ever called again.
+export function getSummedTargetsFor(fy, types) {
+  const all = readAll();
+  const out = {};
+  for (const type of types) {
+    let sum = 0;
+    let anySet = false;
+    for (const [k, v] of Object.entries(all)) {
+      if (v == null) continue;
+      const [kFy, kKam, kType] = k.split("|||");
+      if (kFy === fy && kType === type && kKam !== "ALL") {
+        sum += v;
+        anySet = true;
+      }
+    }
+    if (anySet) out[type] = sum;
+  }
+  return out;
+}

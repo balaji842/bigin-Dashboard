@@ -9,6 +9,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { moneyCr, fullMoney } from "../lib/format.js";
+import ExportButton from "./ExportButton.jsx";
+import ClearFiltersBar from "./ClearFiltersBar.jsx";
+import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
+import { filterRows } from "../lib/donorRows.js";
 
 // Cash / Kind / School Engagement pill filter — same pattern as the Type
 // filter on the FY Comparison page. `selected: null` means "everything".
@@ -40,27 +45,59 @@ function FilterGroup({ label, options, selected, onToggle }) {
   );
 }
 
+// `onDonorsClick` (optional) makes just the donor-count line open a
+// drilldown, independent of the card's own onClick (scope toggle) — div
+// instead of a button as the outer element so the two click targets
+// don't nest one button inside another.
+function KpiDonorsLine({ donors, onDonorsClick }) {
+  if (!onDonorsClick) {
+    return <p className="text-xs text-slate-400 mt-1">{donors} unique donors</p>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (donors > 0) onDonorsClick();
+      }}
+      disabled={donors === 0}
+      className={`text-xs mt-1 font-semibold ${
+        donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+      }`}
+    >
+      {donors} unique donors
+    </button>
+  );
+}
+
 // Clickable when given an onClick — acts as one of 3 mutually-exclusive
 // scope selectors (FY total / open pipeline / current month), matching
 // the KpiCard/FYCard pattern already used on the Overview page.
-function KpiCard({ label, amount, donors, accent = "emerald", active, onClick }) {
+function KpiCard({ label, amount, donors, accent = "emerald", active, onClick, onDonorsClick }) {
   const theme = { pink: "text-pink-600", navy: "text-navy-700", emerald: "text-emerald-600" }[accent];
   const clickable = typeof onClick === "function";
-  const Tag = clickable ? "button" : "div";
   return (
-    <Tag
-      type={clickable ? "button" : undefined}
-      onClick={onClick}
+    <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? onClick : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") onClick();
+            }
+          : undefined
+      }
       className={`text-left rounded-2xl border shadow-sm p-5 transition-colors w-full ${
         active
           ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200"
-          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200" : "")
+          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200 cursor-pointer" : "")
       }`}
     >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">{label}</p>
       <p className={`font-display text-2xl font-bold ${active ? "text-pink-600" : theme}`}>{moneyCr(amount)}</p>
-      <p className="text-xs text-slate-400 mt-1">{donors} unique donors</p>
-    </Tag>
+      <KpiDonorsLine donors={donors} onDonorsClick={onDonorsClick} />
+    </div>
   );
 }
 
@@ -87,7 +124,7 @@ function groupByField(rows, field) {
 // table treatment instead of a compact list.
 // table-fixed + explicit column widths keep the header and every data
 // row's three columns lined up even when a name wraps to two lines.
-function BreakdownTable({ title, nameLabel, rows }) {
+function BreakdownTable({ title, nameLabel, rows, onDonorsClick }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
       <p className="font-display font-bold text-navy-900 text-base mb-3">{title}</p>
@@ -112,7 +149,22 @@ function BreakdownTable({ title, nameLabel, rows }) {
                 <td className="px-4 py-2.5 align-top text-center font-bold text-navy-900 whitespace-nowrap">
                   {moneyCr(r.amount)}
                 </td>
-                <td className="px-4 py-2.5 align-top text-center text-slate-400">{r.donors}</td>
+                <td className="px-4 py-2.5 align-top text-center whitespace-nowrap">
+                  {onDonorsClick ? (
+                    <button
+                      type="button"
+                      onClick={() => r.donors > 0 && onDonorsClick(r.name)}
+                      disabled={r.donors === 0}
+                      className={`font-semibold ${
+                        r.donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+                      }`}
+                    >
+                      {r.donors}
+                    </button>
+                  ) : (
+                    <span className="text-slate-400">{r.donors}</span>
+                  )}
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (
@@ -164,7 +216,7 @@ function toCsvValue(v) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function downloadCsv(rows) {
+function downloadDonorHistoryCsv(rows) {
   const header = ["S.No", "Name", "Amount", "Month", "Type", "Donor Type", "KAM", "SPOC"];
   const lines = [header.join(",")];
   rows.forEach((r, i) => {
@@ -186,13 +238,25 @@ function downloadCsv(rows) {
 const PAGE_SIZE = 10;
 
 // The main "Donor History" table at the bottom of the page: search by
-// name/KAM/SPOC, an optional per-column filter row, CSV export, and
-// numbered pagination — styled after the reference donor-history table.
+// name/KAM/SPOC, per-column multi-select filters (Month, Type, Donor
+// Type, KAM, SPOC), CSV export, and numbered pagination.
 function DonorHistoryTable({ rows, subtitle }) {
   const [search, setSearch] = useState("");
-  const [showFilters, setShowFilters] = useState(false);
-  const [colFilters, setColFilters] = useState({ month: "", type: "", donorType: "", kam: "", spoc: "" });
+  // Multi-select per column — null means "everything" for that column.
+  const [filters, setFilters] = useState({ month: null, type: null, donorType: null, kam: null, spoc: null });
   const [page, setPage] = useState(0);
+
+  // Options are always computed from the full `rows` prop (not the
+  // filtered set), so a column's checkbox list never shrinks as other
+  // filters get applied. Month lives on `monthLabel`, everything else
+  // matches its own field name.
+  const monthOptions = useMemo(() => optionsFor(rows, "monthLabel"), [rows]);
+  const typeOptions = useMemo(() => optionsFor(rows, "type"), [rows]);
+  const donorTypeOptions = useMemo(() => optionsFor(rows, "donorType"), [rows]);
+  const kamOptions = useMemo(() => optionsFor(rows, "kam"), [rows]);
+  const spocOptions = useMemo(() => optionsFor(rows, "spoc"), [rows]);
+  const optionsByField = { month: monthOptions, type: typeOptions, donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions };
+  const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPage, optionsByField);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -201,15 +265,15 @@ function DonorHistoryTable({ rows, subtitle }) {
         const hay = `${r.account} ${r.kam} ${r.spoc}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
-      const month = r.monthLabel || "";
-      if (colFilters.month && !month.toLowerCase().includes(colFilters.month.toLowerCase())) return false;
-      if (colFilters.type && !(r.type || "").toLowerCase().includes(colFilters.type.toLowerCase())) return false;
-      if (colFilters.donorType && !(r.donorType || "").toLowerCase().includes(colFilters.donorType.toLowerCase())) return false;
-      if (colFilters.kam && !(r.kam || "").toLowerCase().includes(colFilters.kam.toLowerCase())) return false;
-      if (colFilters.spoc && !(r.spoc || "").toLowerCase().includes(colFilters.spoc.toLowerCase())) return false;
-      return true;
+      return (
+        matchesFilter(r.monthLabel, filters.month) &&
+        matchesFilter(r.type, filters.type) &&
+        matchesFilter(r.donorType, filters.donorType) &&
+        matchesFilter(r.kam, filters.kam) &&
+        matchesFilter(r.spoc, filters.spoc)
+      );
     });
-  }, [rows, search, colFilters]);
+  }, [rows, search, filters]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -218,10 +282,6 @@ function DonorHistoryTable({ rows, subtitle }) {
 
   const updateSearch = (v) => {
     setSearch(v);
-    setPage(0);
-  };
-  const updateColFilter = (key, v) => {
-    setColFilters((f) => ({ ...f, [key]: v }));
     setPage(0);
   };
 
@@ -244,20 +304,7 @@ function DonorHistoryTable({ rows, subtitle }) {
             placeholder="Search by name, KAM or SPOC…"
             className="text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-pink-400 w-56"
           />
-          <button
-            onClick={() => setShowFilters((s) => !s)}
-            className={`text-sm font-semibold px-3 py-2 rounded-lg border transition-colors ${
-              showFilters ? "bg-navy-900 text-white border-navy-900" : "bg-white text-navy-700 border-slate-200 hover:border-slate-300"
-            }`}
-          >
-            Filter
-          </button>
-          <button
-            onClick={() => downloadCsv(filtered)}
-            className="text-sm font-semibold px-3 py-2 rounded-lg border border-slate-200 text-navy-700 hover:border-slate-300"
-          >
-            Export
-          </button>
+          <ExportButton onClick={() => downloadDonorHistoryCsv(filtered)} disabled={filtered.length === 0} />
         </div>
       </div>
 
@@ -265,63 +312,61 @@ function DonorHistoryTable({ rows, subtitle }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[820px]">
             <thead>
-              <tr className="bg-navy-900 text-white text-left">
+              <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
                 <th className="px-4 py-3 font-semibold">S.No</th>
                 <th className="px-4 py-3 font-semibold">Name</th>
                 <th className="px-4 py-3 font-semibold text-right">Amount</th>
-                <th className="px-4 py-3 font-semibold">Month</th>
-                <th className="px-4 py-3 font-semibold">Type</th>
-                <th className="px-4 py-3 font-semibold">Donor Type</th>
-                <th className="px-4 py-3 font-semibold">KAM</th>
-                <th className="px-4 py-3 font-semibold">SPOC</th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="Month"
+                    options={monthOptions}
+                    selected={filters.month}
+                    onToggle={toggleOption("month")}
+                    onSelectAll={selectAll("month")}
+                    onClearAll={clearAll("month")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="Type"
+                    options={typeOptions}
+                    selected={filters.type}
+                    onToggle={toggleOption("type")}
+                    onSelectAll={selectAll("type")}
+                    onClearAll={clearAll("type")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="Donor Type"
+                    options={donorTypeOptions}
+                    selected={filters.donorType}
+                    onToggle={toggleOption("donorType")}
+                    onSelectAll={selectAll("donorType")}
+                    onClearAll={clearAll("donorType")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="KAM"
+                    options={kamOptions}
+                    selected={filters.kam}
+                    onToggle={toggleOption("kam")}
+                    onSelectAll={selectAll("kam")}
+                    onClearAll={clearAll("kam")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="SPOC"
+                    options={spocOptions}
+                    selected={filters.spoc}
+                    onToggle={toggleOption("spoc")}
+                    onSelectAll={selectAll("spoc")}
+                    onClearAll={clearAll("spoc")}
+                  />
+                </th>
               </tr>
-              {showFilters && (
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="px-4 py-2" />
-                  <th className="px-4 py-2" />
-                  <th className="px-4 py-2" />
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.month}
-                      onChange={(e) => updateColFilter("month", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.type}
-                      onChange={(e) => updateColFilter("type", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.donorType}
-                      onChange={(e) => updateColFilter("donorType", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.kam}
-                      onChange={(e) => updateColFilter("kam", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.spoc}
-                      onChange={(e) => updateColFilter("spoc", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                </tr>
-              )}
             </thead>
             <tbody>
               {pageRows.map((r, i) => (
@@ -533,6 +578,33 @@ export default function CloseddonorsModule() {
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [pipelineError, setPipelineError] = useState(null);
 
+  // Generic donor-list popup for any donor count on this page (KPI
+  // cards, breakdown table rows, Month-wise table).
+  const [drilldown, setDrilldown] = useState(null); // { title, rows } | null
+  const openDrilldown = (title, rows) => setDrilldown({ title, rows });
+
+  // The "Total Pipeline" KPI card's donor count needs the open-pipeline
+  // table, which is only fetched once the "pipeline" scope has actually
+  // been selected — if it hasn't, fetch it on the fly just for this
+  // click rather than forcing the person to switch scope first.
+  const openPipelineDrilldown = async () => {
+    let pd = pipelineData;
+    if (!pd) {
+      try {
+        const params = new URLSearchParams({ fy: FY });
+        if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+        const res = await fetch(`/api/crm-analysis/standard-pipeline?${params.toString()}`);
+        if (res.ok) {
+          pd = await res.json();
+          setPipelineData(pd); // cache it — also primes the "pipeline" scope if picked next
+        }
+      } catch {
+        // Falls through with pd still null; drilldown just opens empty.
+      }
+    }
+    openDrilldown("Total Pipeline 2026-2027", pd ? filterRows(pd.table, () => true) : []);
+  };
+
   const toggleType = (value) => {
     setSelectedTypes((current) => {
       const all = filterOptions.types;
@@ -669,6 +741,22 @@ export default function CloseddonorsModule() {
     }));
   }, [data, prevYearData]);
 
+  const hasActiveFilters = selectedTypes != null || scope !== "fy";
+  const clearAllFilters = () => {
+    setSelectedTypes(null);
+    setScope("fy");
+  };
+  const filterSummary = [
+    selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
+    scope === "pipeline"
+      ? "Scope: Total Pipeline"
+      : scope === "month"
+      ? `Scope: ${data?.currentMonth?.name || "Current"} Month`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   const filterBar = (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
       <FilterGroup
@@ -683,6 +771,7 @@ export default function CloseddonorsModule() {
   if (loading && !data) {
     return (
       <div className="space-y-5 sm:space-y-6">
+        <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
         {filterBar}
         <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
           Loading closed donors…
@@ -694,6 +783,7 @@ export default function CloseddonorsModule() {
   if (error) {
     return (
       <div className="space-y-5 sm:space-y-6">
+        <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
         {filterBar}
         <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
           Couldn't load closed donors: {error}
@@ -704,6 +794,7 @@ export default function CloseddonorsModule() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
+      <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
       {filterBar}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -714,6 +805,7 @@ export default function CloseddonorsModule() {
           accent="emerald"
           active={scope === "fy"}
           onClick={() => setScope("fy")}
+          onDonorsClick={() => openDrilldown(`FY ${data.fy} Total`, filterRows(data.table, () => true))}
         />
         <KpiCard
           label={`Total Pipeline ${data.fy}`}
@@ -722,6 +814,7 @@ export default function CloseddonorsModule() {
           accent="pink"
           active={scope === "pipeline"}
           onClick={() => setScope("pipeline")}
+          onDonorsClick={openPipelineDrilldown}
         />
         <KpiCard
           label={`${data.currentMonth.name} Month Conversion`}
@@ -730,6 +823,12 @@ export default function CloseddonorsModule() {
           accent="navy"
           active={scope === "month"}
           onClick={() => setScope("month")}
+          onDonorsClick={() =>
+            openDrilldown(
+              `${data.currentMonth.name} Month Conversion`,
+              filterRows(data.table, (r) => monthNameOf(r.closingDate) === data.currentMonth.name)
+            )
+          }
         />
       </div>
 
@@ -753,10 +852,29 @@ export default function CloseddonorsModule() {
 
           <div className="grid gap-4 md:grid-cols-2 items-start">
             <div className="flex flex-col gap-4">
-              <BreakdownTable title="By Platform" nameLabel="Platform" rows={scoped.byPlatform} />
-              <BreakdownTable title="By Donor Type" nameLabel="Donor Type" rows={scoped.byDonorType} />
+              <BreakdownTable
+                title="By Platform"
+                nameLabel="Platform"
+                rows={scoped.byPlatform}
+                onDonorsClick={(name) =>
+                  openDrilldown(`Platform: ${name}`, filterRows(scoped.table, (r) => r.platform === name))
+                }
+              />
+              <BreakdownTable
+                title="By Donor Type"
+                nameLabel="Donor Type"
+                rows={scoped.byDonorType}
+                onDonorsClick={(name) =>
+                  openDrilldown(`Donor Type: ${name}`, filterRows(scoped.table, (r) => r.donorType === name))
+                }
+              />
             </div>
-            <BreakdownTable title="By KAM" nameLabel="KAM" rows={scoped.byKAM} />
+            <BreakdownTable
+              title="By KAM"
+              nameLabel="KAM"
+              rows={scoped.byKAM}
+              onDonorsClick={(name) => openDrilldown(`KAM: ${name}`, filterRows(scoped.table, (r) => r.kam === name))}
+            />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[auto,1fr] items-start">
@@ -784,7 +902,21 @@ export default function CloseddonorsModule() {
                       <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                         <td className="pl-5 pr-6 py-2 text-navy-900 font-medium whitespace-nowrap">{m.name}</td>
                         <td className="pr-6 py-2 text-right whitespace-nowrap">{moneyCr(m.amount)}</td>
-                        <td className="pr-5 py-2 text-right text-slate-500 whitespace-nowrap">{m.donors}</td>
+                        <td className="pr-5 py-2 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              m.donors > 0 &&
+                              openDrilldown(m.name, filterRows(scoped.table, (r) => r.monthLabel === m.name))
+                            }
+                            disabled={m.donors === 0}
+                            className={`font-semibold ${
+                              m.donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+                            }`}
+                          >
+                            {m.donors}
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {scoped.monthWise.length === 0 && (
@@ -812,6 +944,13 @@ export default function CloseddonorsModule() {
           />
         </>
       )}
+
+      <DonorDrilldownModal
+        open={!!drilldown}
+        onClose={() => setDrilldown(null)}
+        title={drilldown?.title}
+        donors={drilldown?.rows || []}
+      />
     </div>
   );
 }

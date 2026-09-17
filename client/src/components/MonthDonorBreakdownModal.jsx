@@ -71,13 +71,14 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
             <>
               <BucketSection title="Matching Donors" donorCount={data.matching.donorCount} totalAmount={data.matching.totalAmount}>
                 <div className="overflow-x-auto bg-white">
-                  <table className="w-full text-sm min-w-[720px]">
+                  <table className="w-full text-sm min-w-[820px]">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                         <th className="px-4 py-2 font-semibold">#</th>
                         <th className="px-4 py-2 font-semibold">Donor</th>
                         <th className="px-4 py-2 font-semibold text-right">FY {fy1} Amount &amp; Type</th>
                         <th className="px-4 py-2 font-semibold text-right">FY {fy2} Amount &amp; Type</th>
+                        <th className="px-4 py-2 font-semibold">FY {fy2} Month</th>
                         <th className="px-4 py-2 font-semibold text-right">Difference</th>
                         <th className="px-4 py-2 font-semibold">KAM</th>
                         <th className="px-4 py-2 font-semibold">SPOC</th>
@@ -90,12 +91,21 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
                           <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
                           <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy1Amount)} — {r.fy1Type}</td>
                           <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy2Amount)} — {r.fy2Type}</td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {r.fy2Month && r.fy2Month !== monthName ? (
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700" title={`Gave again in ${r.fy2Month} instead of ${monthName}`}>
+                                {r.fy2Month}
+                              </span>
+                            ) : (
+                              r.fy2Month || "—"
+                            )}
+                          </td>
                           <td className="px-4 py-2 text-right"><DiffBadge pct={r.diffPct} amount={r.diffAmount} /></td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
                         </tr>
                       ))}
-                      {data.matching.rows.length === 0 && <EmptyRow span={7} />}
+                      {data.matching.rows.length === 0 && <EmptyRow span={8} />}
                     </tbody>
                   </table>
                 </div>

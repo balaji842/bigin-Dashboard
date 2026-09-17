@@ -20,7 +20,7 @@ import {
   STANDARD_TYPES,
   isApprovedOpenPipeline,
 } from "../lib/dealHelpers.js";
-import { getTargetsFor, setTarget } from "../lib/targetsStore.js";
+import { getTargetsFor, getSummedTargetsFor, setTarget } from "../lib/targetsStore.js";
 
 
 // Parses a comma-separated query param into a trimmed array, or null if
@@ -65,16 +65,22 @@ router.get("/crm-analysis/filter-options", async (_req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
-// GET /api/crm-analysis/overview?fy=2025-2026&types=Cash,Kind&donorType=NPO
-// fy can also be "ALL", meaning "every fiscal year combined" — used by the
-// clickable "Total Conversion FY 2022-2027" card on the Overview page.
-// donorType is a single value from the "By Donor Type" cards (e.g. "NPO") —
-// clicking one of those cards scopes every other card/table on the page to
-// just that donor type, the same way the Type pills already do for "Type".
+// GET /api/crm-analysis/overview?fy=2025-2026,2026-2027&types=Cash,Kind&donorTypes=NPO,Corporate
+// fy is "ALL" (or omitted) meaning "every fiscal year combined", or a
+// comma-separated list of one or more specific fiscal years to combine —
+// used by the clickable "Total Conversion FY 2022-2027" card (resets to
+// "ALL") and the multi-select FY cards below it.
+// donorTypes is a comma-separated list from the "By Donor Type" cards
+// (e.g. "NPO,Corporate") — selecting one or more of those cards scopes
+// every other card/table on the page to just those donor types, the
+// same way the Type pills already do for "Type".
 router.get("/crm-analysis/overview", async (req, res) => {
-  const currentFY = req.query.fy || "ALL";
+  const rawFy = req.query.fy;
+  // null = "ALL" (every fiscal year combined); otherwise an array of the
+  // specific fiscal years currently selected.
+  const selectedFYs = !rawFy || rawFy === "ALL" ? null : parseListParam(rawFy);
   const selectedTypes = parseListParam(req.query.types);
-  const selectedDonorType = req.query.donorType || null;
+  const selectedDonorTypes = parseListParam(req.query.donorTypes);
 
   try {
     const donors = await fetchAllRecords("Pipelines");
@@ -84,44 +90,57 @@ router.get("/crm-analysis/overview", async (req, res) => {
       filtereddonors = filtereddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
     }
 
-    // Everything below reacts to the donor-type selection EXCEPT the "By
-    // Donor Type" cards themselves — those stay computed from the
-    // pre-donor-type-filter set (closeddonorsBase/closedThisFYBase) so all
-    // of them keep showing up as clickable options even while one is
-    // selected, instead of collapsing down to a single card.
-    const closeddonorsBase = filtereddonors.filter(isClosed);
+    const closeddonorsAll = filtereddonors.filter(isClosed);
+    const standarddonors = filtereddonors.filter(isStandardPipeline);
 
-    let filtereddonorsForData = filtereddonors;
-    if (selectedDonorType) {
-      filtereddonorsForData = filtereddonorsForData.filter(
-        (d) => pick(d, "Type_of_donor") === selectedDonorType
-      );
-    }
+    // Two single-dimension views, each respecting only the OTHER
+    // dimension's selection — this is what keeps every FY card and every
+    // Donor Type card visible and clickable no matter what's currently
+    // selected, instead of the active selection collapsing its own
+    // card list down to just itself.
+    //
+    // closedByDonorTypeOnly: respects the donor-type selection, ignores
+    // the FY selection — always spans every fiscal year, which is
+    // exactly what powers the FY cards (each one's total is scoped by
+    // donor type but never by which FY(s) are currently selected).
+    const closedByDonorTypeOnly =
+      selectedDonorTypes && selectedDonorTypes.length > 0
+        ? closeddonorsAll.filter((d) => selectedDonorTypes.includes(pick(d, "Type_of_donor")))
+        : closeddonorsAll;
 
-    const closeddonors = filtereddonorsForData.filter(isClosed);
-    const standarddonors = filtereddonorsForData.filter(isStandardPipeline);
+    // closedByFYOnly: respects the FY selection, ignores the donor-type
+    // selection — powers the Donor Type cards (each one's total is
+    // scoped to the selected FY(s), or every year when "ALL", but never
+    // narrowed by which donor type(s) are currently selected).
+    const closedByFYOnly =
+      selectedFYs && selectedFYs.length > 0
+        ? closeddonorsAll.filter((d) => selectedFYs.includes(pick(d, "Fiscal_year", "")))
+        : closeddonorsAll;
 
-    // "ALL" scopes Month-wise / By Donor Type to every closed deal across
-    // every fiscal year, instead of narrowing to a single selected FY.
+    // Both dimensions combined — this is the actual current scope: what
+    // the KPI totals, Month-wise table, and Donor History table show.
     const closedThisFY =
-      currentFY === "ALL"
-        ? closeddonors
-        : closeddonors.filter((d) => pick(d, "Fiscal_year", "") === currentFY);
+      selectedFYs && selectedFYs.length > 0
+        ? closedByDonorTypeOnly.filter((d) => selectedFYs.includes(pick(d, "Fiscal_year", "")))
+        : closedByDonorTypeOnly;
 
-    const closedThisFYBase =
-      currentFY === "ALL"
-        ? closeddonorsBase
-        : closeddonorsBase.filter((d) => pick(d, "Fiscal_year", "") === currentFY);
+    const filtereddonorsForData =
+      selectedDonorTypes && selectedDonorTypes.length > 0
+        ? filtereddonors.filter((d) => selectedDonorTypes.includes(pick(d, "Type_of_donor")))
+        : filtereddonors;
 
     const pipeline2027Approved = standarddonors.filter(
       (d) => pick(d, "Fiscal_year", "") === "2026-2027" && isApprovedOpenPipeline(d)
     );
 
     res.json({
-      fy: currentFY,
-      donorType: selectedDonorType,
+      fy: selectedFYs && selectedFYs.length > 0 ? selectedFYs : "ALL",
+      donorTypes: selectedDonorTypes && selectedDonorTypes.length > 0 ? selectedDonorTypes : null,
       closed: {
-        allTime: totalsFor(closeddonors),
+        // "allTime" ignores the FY selection by design — it's the basis
+        // for the "Total Conversion FY 2022-2027" card, which always
+        // means every year, only ever scoped by donor type.
+        allTime: totalsFor(closedByDonorTypeOnly),
         thisFY: totalsFor(closedThisFY),
       },
       pipeline2027Approved: totalsFor(pipeline2027Approved),
@@ -130,19 +149,21 @@ router.get("/crm-analysis/overview", async (req, res) => {
       // clickable FY cards on the Overview page. "Unspecified" (donors
       // with no Fiscal_year set) is dropped since it isn't a real year
       // to click into; sorted chronologically (the "YYYY-YYYY" format
-      // sorts correctly as plain strings).
-      byFiscalYear: groupSummary(closeddonors, "Fiscal_year")
+      // sorts correctly as plain strings). Computed from
+      // closedByDonorTypeOnly so every FY card stays visible/clickable
+      // regardless of which FY(s) are currently selected.
+      byFiscalYear: groupSummary(closedByDonorTypeOnly, "Fiscal_year")
         .filter((r) => r.name !== "Unspecified")
         .sort((a, b) => a.name.localeCompare(b.name)),
 
-      // Both of these now follow whichever scope is selected (one FY, or
-      // "ALL" for everything combined) via closedThisFY above, AND the
-      // donor-type selection.
+      // Both of these follow the fully-combined scope (FY selection AND
+      // donor-type selection).
       monthWise: monthWiseSummary(closedThisFY, "Closing_Date"),
 
-      // Computed from the donor-type-UNfiltered set so every card stays
-      // visible and clickable regardless of which one is currently active.
-      byDonorType: groupSummary(closedThisFYBase, "Type_of_donor"),
+      // Computed from closedByFYOnly so every Donor Type card stays
+      // visible/clickable regardless of which donor type(s) are
+      // currently selected.
+      byDonorType: groupSummary(closedByFYOnly, "Type_of_donor"),
 
       // Raw rows for the filterable table at the bottom of the module.
       // Kept lean — just what the table needs to display + filter on.
@@ -526,12 +547,16 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
 });
 
 // GET /api/crm-analysis/fy-comparison/month-donor-list?fy=2025-2026&month=August&types=&kams=&spocs=&platforms=
+// month can also be "ALL" (every donor in that FY — powers the "Full
+// Year" ConversionCard) or "YTD" (April through the current real
+// calendar month, same cutoff the YTD cards themselves use).
 //
-// One row per unique donor (not per deal) for one fiscal year + month —
-// powers the drilldown popup when a Donors count cell is clicked in the
-// By Month table. A donor with multiple gifts that month is merged into
-// a single row (amounts summed, Platform/KAM/SPOC joined) so the popup's
-// row count always matches the unique-donor count shown in the table.
+// One row per unique donor (not per deal) for the given scope — powers
+// the drilldown popup when any Donors count is clicked (By Month table,
+// or the Full Year / YTD cards above it). A donor with multiple gifts
+// in scope is merged into a single row (amounts summed, Platform/KAM/
+// SPOC joined) so the popup's row count always matches the unique-donor
+// count shown wherever it was clicked from.
 router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
   const fy = req.query.fy;
   const month = req.query.month;
@@ -550,16 +575,28 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
   try {
     const donors = await fetchAllRecords("Pipelines");
     const closeddonors = applyFilters(donors.filter(isClosed), filters);
+    const fyDonors = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy);
 
-    const donorsThisMonth = closeddonors.filter(
-      (d) => pick(d, "Fiscal_year", "") === fy && monthNameOf(d.Closing_Date) === month
-    );
+    let donorsInScope;
+    if (month === "ALL") {
+      donorsInScope = fyDonors;
+    } else if (month === "YTD") {
+      const cutoffIndex = fiscalMonthIndex(new Date());
+      donorsInScope = fyDonors.filter((d) => {
+        if (!d.Closing_Date) return false;
+        const date = new Date(d.Closing_Date);
+        if (isNaN(date)) return false;
+        return fiscalMonthIndex(date) <= cutoffIndex;
+      });
+    } else {
+      donorsInScope = fyDonors.filter((d) => monthNameOf(d.Closing_Date) === month);
+    }
 
-    // Group by donor so a donor with multiple gifts this month appears
-    // once (matching the unique-donor count shown in the By Month table)
-    // instead of once per deal.
+    // Group by donor so a donor with multiple gifts in scope appears
+    // once (matching the unique-donor count shown wherever this was
+    // clicked from) instead of once per deal.
     const byDonor = {};
-    for (const d of donorsThisMonth) {
+    for (const d of donorsInScope) {
       const key = uniqueDonorKey(d);
       if (!key) continue;
       if (!byDonor[key]) {
@@ -569,12 +606,16 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
           platforms: new Set(),
           kams: new Set(),
           spocs: new Set(),
+          types: new Set(),
+          donorTypes: new Set(),
         };
       }
       byDonor[key].amount += pickNumber(d, "Amount");
       byDonor[key].platforms.add(pick(d, "Platform"));
       byDonor[key].kams.add(pick(d, "Pipeline_KAM"));
       byDonor[key].spocs.add(pick(d, "Spoc"));
+      byDonor[key].types.add(pick(d, "Type"));
+      byDonor[key].donorTypes.add(pick(d, "Type_of_donor"));
     }
 
     const rows = Object.values(byDonor)
@@ -584,6 +625,8 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
         platform: [...r.platforms].join(" / "),
         kam: [...r.kams].join(" / "),
         spoc: [...r.spocs].join(" / "),
+        type: [...r.types].join(" / "),
+        donorType: [...r.donorTypes].join(" / "),
       }))
       .sort((a, b) => b.amount - a.amount);
 
@@ -625,6 +668,8 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
 });
 
 // GET /api/crm-analysis/kam-comparison?kam=NGOs%20%2F%20NPOs&fy1=2025-2026&fy2=2026-2027
+// kam can also be "ALL" — aggregates every KAM together instead of
+// filtering to one, for the "All KAM" option on Engagement Status.
 //
 // Type x Platform breakdown for one KAM, for both fiscal years — powers
 // the "Comparison of [KAM] for the year [FY]" tables on Engagement
@@ -650,7 +695,7 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
   try {
     const donors = await fetchAllRecords("Pipelines");
     const matchesFilters = (d) =>
-      pick(d, "Pipeline_KAM") === kam &&
+      (kam === "ALL" || pick(d, "Pipeline_KAM") === kam) &&
       (!spoc || pick(d, "Spoc") === spoc) &&
       (!donorType || pick(d, "Type_of_donor") === donorType);
 
@@ -693,6 +738,9 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
 });
 
 // GET /api/crm-analysis/targets?kam=...&fy1=...&fy2=...
+// kam="ALL" returns the sum of every real KAM's target per type,
+// read-only on the client (there's no single target to edit when
+// looking at every KAM combined).
 router.get("/crm-analysis/targets", (req, res) => {
   const kam = req.query.kam;
   const fy1 = req.query.fy1 || "2025-2026";
@@ -703,6 +751,14 @@ router.get("/crm-analysis/targets", (req, res) => {
   }
 
   try {
+    if (kam === "ALL") {
+      res.json({
+        kam,
+        fy1: { fy: fy1, targets: getSummedTargetsFor(fy1, STANDARD_TYPES) },
+        fy2: { fy: fy2, targets: getSummedTargetsFor(fy2, STANDARD_TYPES) },
+      });
+      return;
+    }
     res.json({
       kam,
       fy1: { fy: fy1, targets: getTargetsFor(fy1, kam, STANDARD_TYPES) },
@@ -718,6 +774,9 @@ router.put("/crm-analysis/targets", (req, res) => {
   const { kam, fy, type, value } = req.body || {};
   if (!kam || !fy || !type || typeof value !== "number" || Number.isNaN(value)) {
     return res.status(400).json({ error: "kam, fy, type (string) and value (number) are required" });
+  }
+  if (kam === "ALL") {
+    return res.status(400).json({ error: "Can't set a target for the combined \"All KAM\" view — pick a specific KAM." });
   }
   try {
     const saved = setTarget(fy, kam, type, value);

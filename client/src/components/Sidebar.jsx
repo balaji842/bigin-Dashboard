@@ -1,4 +1,4 @@
-import { IconChartBars, IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar, IconCheckCircle } from "./icons.jsx";
+import { IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar, IconCheckCircle } from "./icons.jsx";
 const NAV_ITEMS = [
   //{ id: "bigin-overview", label: "Bigin Overview", ready: true },
   { id: "crm-overview", label: "Overview", ready: true, icon: IconTarget },
@@ -23,8 +23,8 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
           ${open ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
         <div className="px-6 py-6 border-b border-white/10 flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-purple-400 text-white flex items-center justify-center shrink-0 shadow-sm shadow-black/20">
-            <IconChartBars className="w-[18px] h-[18px]" />
+          <span className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shrink-0 shadow-sm shadow-black/20 overflow-hidden">
+            <img src="/logo-mbyom.png" alt="mByom logo" className="w-full h-full object-cover" />
           </span>
           <div className="min-w-0">
             <p className="font-display font-bold text-lg tracking-tight leading-none">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import MonthDonorBreakdownModal from "./MonthDonorBreakdownModal.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
+import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import { IconBuilding, IconCalendar, IconTag, IconUsers, IconLayers } from "./icons.jsx";
 import { moneyCr } from "../lib/format.js";
 
@@ -199,7 +200,7 @@ const CARD_THEMES = {
   },
 };
 
-function ConversionCard({ title, sublabel, amount, donors, theme, diff, sparkValues }) {
+function ConversionCard({ title, sublabel, amount, donors, theme, diff, sparkValues, onDonorsClick }) {
   const t = CARD_THEMES[theme] || CARD_THEMES.blue;
   return (
     <div className={`rounded-2xl border border-slate-100 shadow-sm p-5 relative ${t.bg}`}>
@@ -209,7 +210,18 @@ function ConversionCard({ title, sublabel, amount, donors, theme, diff, sparkVal
       <p className={`text-xs uppercase tracking-wide font-bold mb-1 pr-8 ${t.title}`}>{title}</p>
       {sublabel && <p className="text-xs text-slate-500 font-medium mb-3">{sublabel}</p>}
       <p className={`font-display text-2xl font-bold ${t.number}`}>{moneyCr(amount)}</p>
-      <p className={`text-xs font-semibold mt-1 ${t.title}`}>{donors} donors</p>
+      {onDonorsClick ? (
+        <button
+          type="button"
+          onClick={() => donors > 0 && onDonorsClick()}
+          disabled={!donors}
+          className={`text-xs font-semibold mt-1 ${donors > 0 ? `underline ${t.title} hover:opacity-70` : "text-slate-300"}`}
+        >
+          {donors} donors
+        </button>
+      ) : (
+        <p className={`text-xs font-semibold mt-1 ${t.title}`}>{donors} donors</p>
+      )}
       {diff && diff.pctChange != null && (
         <p className={`text-xs font-semibold mt-3 ${diff.pctChange >= 0 ? "text-emerald-600" : "text-red-500"}`}>
           {diff.pctChange >= 0 ? "▲" : "▼"} {Math.abs(diff.pctChange).toFixed(1)}%
@@ -228,7 +240,19 @@ function ConversionCard({ title, sublabel, amount, donors, theme, diff, sparkVal
 // dashed divider — last year's figure is the headline, this year's is
 // the small comparison figure below it. Automatically shows September
 // once the fiscal cutoff moves there.
-function MonthComparisonCard({ monthName, fy1, fy2, amountA, donorsA, amountB, donorsB, diffPct, diffAmount }) {
+function MonthComparisonCard({
+  monthName,
+  fy1,
+  fy2,
+  amountA,
+  donorsA,
+  amountB,
+  donorsB,
+  diffPct,
+  diffAmount,
+  onDonorsAClick,
+  onDonorsBClick,
+}) {
   return (
     <div className="rounded-2xl border border-slate-100 shadow-sm p-5 relative bg-gradient-to-b from-indigo-50/70 to-white">
       <span className="absolute top-5 right-5 w-8 h-8 rounded-full flex items-center justify-center bg-indigo-100 text-indigo-600">
@@ -236,15 +260,37 @@ function MonthComparisonCard({ monthName, fy1, fy2, amountA, donorsA, amountB, d
       </span>
       <p className="text-xs uppercase tracking-wide text-slate-800 font-bold mb-3 pr-8">{monthName}</p>
 
-      <p className="text-xs text-slate-500 font-semibold">FY {fy1}</p>
-      <p className="font-display text-2xl font-bold text-indigo-600">{moneyCr(amountA)}</p>
-      <p className="text-xs text-indigo-600 font-semibold mt-1">{donorsA} donors</p>
+      <p className="text-xs text-slate-500 font-semibold">FY {fy2}</p>
+      <p className="font-display text-2xl font-bold text-pink-600">{moneyCr(amountB)}</p>
+      {onDonorsBClick ? (
+        <button
+          type="button"
+          onClick={() => donorsB > 0 && onDonorsBClick()}
+          disabled={!donorsB}
+          className={`text-xs font-semibold mt-1 ${donorsB > 0 ? "text-pink-600 underline hover:text-pink-700" : "text-slate-300"}`}
+        >
+          {donorsB} donors
+        </button>
+      ) : (
+        <p className="text-xs text-pink-600 font-semibold mt-1">{donorsB} donors</p>
+      )}
 
       <div className="border-t border-dashed border-slate-200 my-3" />
 
-      <p className="text-xs text-slate-500 font-semibold">FY {fy2}</p>
-      <p className="font-display text-lg font-bold text-pink-600">{moneyCr(amountB)}</p>
-      <p className="text-xs text-pink-600 font-semibold mt-1">{donorsB} donors</p>
+      <p className="text-xs text-slate-500 font-semibold">FY {fy1}</p>
+      <p className="font-display text-lg font-bold text-indigo-600">{moneyCr(amountA)}</p>
+      {onDonorsAClick ? (
+        <button
+          type="button"
+          onClick={() => donorsA > 0 && onDonorsAClick()}
+          disabled={!donorsA}
+          className={`text-xs font-semibold mt-1 ${donorsA > 0 ? "text-indigo-600 underline hover:text-indigo-700" : "text-slate-300"}`}
+        >
+          {donorsA} donors
+        </button>
+      ) : (
+        <p className="text-xs text-indigo-600 font-semibold mt-1">{donorsA} donors</p>
+      )}
 
       {diffPct != null && (
         <>
@@ -506,6 +552,23 @@ export default function FYComparisonModule() {
       .finally(() => setLoading(false));
   }, [selectedTypes, selectedKams, selectedSpocs, selectedPlatforms]);
 
+  const hasActiveFilters =
+    selectedTypes != null || selectedKams != null || selectedSpocs != null || selectedPlatforms != null;
+  const clearAllFilters = () => {
+    setSelectedTypes(null);
+    setSelectedKams(null);
+    setSelectedSpocs(null);
+    setSelectedPlatforms(null);
+  };
+  const filterSummary = [
+    selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
+    selectedKams != null ? `KAM: ${selectedKams.join(", ")}` : null,
+    selectedSpocs != null ? `SPOC: ${selectedSpocs.join(", ")}` : null,
+    selectedPlatforms != null ? `Platform: ${selectedPlatforms.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   const filterBar = (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
       <FilterGroup label="Type" options={filterOptions.types} selected={selectedTypes} onToggle={toggleType} />
@@ -538,6 +601,7 @@ export default function FYComparisonModule() {
   if (loading && !data) {
     return (
       <div className="space-y-5 sm:space-y-6">
+        <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
         {filterBar}
         <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
           Loading FY comparison…
@@ -549,6 +613,7 @@ export default function FYComparisonModule() {
   if (error) {
     return (
       <div className="space-y-5 sm:space-y-6">
+        <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
         {filterBar}
         <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
           Couldn't load FY comparison: {error}
@@ -562,6 +627,7 @@ export default function FYComparisonModule() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
+      <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
       {filterBar}
 
       <div>
@@ -580,6 +646,7 @@ export default function FYComparisonModule() {
             donors={conv.fy1Full?.donors}
             theme="blue"
             sparkValues={data.byMonth?.map((r) => r.amountA)}
+            onDonorsClick={() => openDonorListModal(data.fy1, "ALL")}
           />
           <ConversionCard
             title={`FY ${data.fy1}`}
@@ -588,6 +655,7 @@ export default function FYComparisonModule() {
             donors={conv.fy1YTD?.donors}
             theme="emerald"
             sparkValues={data.byMonth?.filter((r) => r.diffPct != null).map((r) => r.amountA)}
+            onDonorsClick={() => openDonorListModal(data.fy1, "YTD")}
           />
           <ConversionCard
             title={`FY ${data.fy2}`}
@@ -601,6 +669,7 @@ export default function FYComparisonModule() {
               amount: conv.ytdDiffAmount,
               vsLabel: `FY ${data.fy1} same period`,
             }}
+            onDonorsClick={() => openDonorListModal(data.fy2, "YTD")}
           />
           <MonthComparisonCard
             monthName={conv.currentMonth?.name}
@@ -612,6 +681,8 @@ export default function FYComparisonModule() {
             donorsB={conv.currentMonth?.fy2Donors}
             diffPct={conv.currentMonth?.diffPct}
             diffAmount={conv.currentMonth?.diffAmount}
+            onDonorsAClick={() => openDonorListModal(data.fy1, conv.currentMonth?.name)}
+            onDonorsBClick={() => openDonorListModal(data.fy2, conv.currentMonth?.name)}
           />
         </div>
       </div>
@@ -645,6 +716,13 @@ export default function FYComparisonModule() {
       <DonorDrilldownModal
         open={donorListOpen}
         onClose={() => setDonorListOpen(false)}
+        title={
+          donorListMonth === "ALL"
+            ? `FY ${donorListFy} — Full Year`
+            : donorListMonth === "YTD"
+            ? `FY ${donorListFy} — Year to Date`
+            : undefined
+        }
         monthName={donorListMonth}
         fy={donorListFy}
         donors={donorListRows}

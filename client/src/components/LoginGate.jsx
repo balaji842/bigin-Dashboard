@@ -54,8 +54,8 @@ export default function LoginGate({ onUnlock }) {
         className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-slate-100 p-6 sm:p-8"
       >
         <div className="flex items-center gap-2 mb-1">
-          <span className="w-8 h-8 rounded-lg bg-navy-900 flex items-center justify-center text-pink-400 font-display font-bold">
-            B
+          <span className="w-8 h-8 rounded-lg bg-white border border-slate-100 flex items-center justify-center shrink-0 overflow-hidden">
+            <img src="/logo-mbyom.png" alt="mByom logo" className="w-full h-full object-cover" />
           </span>
           <p className="font-display font-bold text-navy-900 text-lg">
             Bigin<span className="text-pink-500">.</span>Analysis

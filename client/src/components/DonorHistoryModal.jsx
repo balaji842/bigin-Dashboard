@@ -43,8 +43,6 @@ const ACCOUNT_INFO_LABELS = [
   "Donor Type",
   "Sub_KAM",
   "Category",
-  "Donation Type",
-  "Rhapsody / IGCC",
 ];
 
 const CONTACT_INFO_LABELS = [

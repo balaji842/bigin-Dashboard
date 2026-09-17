@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { moneyCr } from "../lib/format.js";
+import { downloadCsv } from "../lib/csvExport.js";
+import ExportButton from "./ExportButton.jsx";
+import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
 import KamComparisonTables from "./KamComparisonTables.jsx";
 
@@ -50,6 +53,27 @@ function ArrowDownIcon(props) {
 // every categorical column: Type of Engagement, Engagement Status,
 // Platform, SPOC, KAM, Donor Type, Category. `selected: null` means
 // "everything" (no filtering on that field).
+// Simple on/off toggle for the Pipeline Month header — unlike
+// ColumnFilterMenu's checkbox list, this is a single click: on shows
+// only donors that actually have a pipeline entry, off (click again)
+// brings every row back.
+function PipelineOnlyToggle({ active, onClick }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span>Pipeline Month</span>
+      <button
+        type="button"
+        onClick={onClick}
+        className={`p-0.5 rounded ${active ? "text-indigo-600" : "text-slate-400 hover:text-slate-600"}`}
+        aria-label="Show only donors with a pipeline entry"
+        title={active ? "Showing pipeline donors only — click to show everyone" : "Click to show only donors with a pipeline entry"}
+      >
+        <FunnelIcon className="w-3.5 h-3.5" />
+      </button>
+    </span>
+  );
+}
+
 function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -245,6 +269,10 @@ export default function EngagementStatusModule() {
     Object.fromEntries(FILTERABLE_KEYS.map((k) => [k, null]))
   );
 
+  // Pipeline Month header's on/off toggle — true shows only donors with
+  // an actual pipeline entry; false (the default) shows everyone.
+  const [pipelineOnly, setPipelineOnly] = useState(false);
+
   // Only one column sorts at a time, and only the two Amount columns
   // are sortable.
   const [sortColumn, setSortColumn] = useState(null);
@@ -346,6 +374,7 @@ export default function EngagementStatusModule() {
 
     let rows = baseRows.filter((r) => {
       if (q && !r.account.toLowerCase().includes(q)) return false;
+      if (pipelineOnly && !r.pipelineMonth) return false;
       for (const key of FILTERABLE_KEYS) {
         if (key === "fy1Type" || key === "fy2Type") continue; // handled above
         const selected = filters[key];
@@ -375,7 +404,7 @@ export default function EngagementStatusModule() {
     }
 
     return rows;
-  }, [data, search, filters, sortColumn, sortDir]);
+  }, [data, search, filters, pipelineOnly, sortColumn, sortDir]);
 
   // Unique-donor counts AND amount totals for the summary cards — now
   // computed from the FILTERED rows (search + every column filter), so
@@ -415,7 +444,7 @@ export default function EngagementStatusModule() {
   }, [filteredRows]);
 
   // Reset to page 1 whenever the filtered/sorted set or page size changes.
-  useEffect(() => setPage(1), [search, filters, sortColumn, sortDir, rowsPerPage]);
+  useEffect(() => setPage(1), [search, filters, pipelineOnly, sortColumn, sortDir, rowsPerPage]);
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / rowsPerPage));
   const pageRows = filteredRows.slice((page - 1) * rowsPerPage, page * rowsPerPage);
@@ -474,6 +503,29 @@ export default function EngagementStatusModule() {
     );
   }
 
+  const hasActiveFilters =
+    search.trim() !== "" ||
+    Object.values(filters).some((v) => v != null) ||
+    pipelineOnly ||
+    sortColumn != null;
+
+  const clearAllFilters = () => {
+    setSearch("");
+    setFilters(Object.fromEntries(FILTERABLE_KEYS.map((k) => [k, null])));
+    setPipelineOnly(false);
+    setSortColumn(null);
+    setSortDir(null);
+  };
+
+  const filterSummary = [
+    search.trim() ? `Search: "${search.trim()}"` : null,
+    ...FILTERABLE_KEYS.filter((k) => filters[k] != null).map((k) => `${k}: ${filters[k].join(", ")}`),
+    pipelineOnly ? "Pipeline Month only" : null,
+    sortColumn ? `Sorted by ${sortColumn}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   // Small helpers so each header cell wiring below stays one line.
   const filterMenuProps = (key, label) => ({
     label,
@@ -506,6 +558,8 @@ export default function EngagementStatusModule() {
 
   return (
     <div className="space-y-5">
+      <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
+
       <KamComparisonTables fy1={fy1} fy2={fy2} />
 
       {/* Summary cards — click to filter Engagement Status; the Total
@@ -588,9 +642,60 @@ export default function EngagementStatusModule() {
 
       {/* Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="bg-gradient-to-r from-indigo-600 to-blue-500 text-white px-4 sm:px-5 py-3 flex items-center gap-2">
-          <IconClipboard className="w-4 h-4" />
-          <p className="font-display font-semibold text-sm">Donor Wise Comparison</p>
+        <div className="bg-gradient-to-r from-indigo-600 to-blue-500 text-white px-4 sm:px-5 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <IconClipboard className="w-4 h-4" />
+            <p className="font-display font-semibold text-sm">Donor Wise Comparison</p>
+          </div>
+          <ExportButton
+            variant="dark"
+            disabled={filteredRows.length === 0}
+            onClick={() =>
+              downloadCsv(
+                "engagement-status-donor-comparison.csv",
+                [
+                  "Donor Name",
+                  `FY ${fy1} Amount`,
+                  `FY ${fy1} Type of Engagement`,
+                  `FY ${fy1} Conversion Month`,
+                  `FY ${fy2} Amount`,
+                  `FY ${fy2} Type of Engagement`,
+                  `FY ${fy2} Conversion Month`,
+                  "Difference",
+                  "Percentage (%)",
+                  "Amount Difference (₹)",
+                  "Pipeline Amount (₹)",
+                  "Pipeline Month",
+                  "Engagement Status",
+                  "Platform",
+                  "SPOC",
+                  "KAM",
+                  "Donor Type",
+                  "Category",
+                ],
+                filteredRows.map((r) => [
+                  r.account,
+                  r.fy1Amount ?? "",
+                  r.fy1Type || "",
+                  r.fy1Month || "",
+                  r.fy2Amount ?? "",
+                  r.fy2Type || "",
+                  r.fy2Month || "",
+                  r.diffAmount == null ? "" : r.diffAmount > 0 ? "Increase" : r.diffAmount < 0 ? "Decrease" : "No Change",
+                  r.diffPct == null ? "" : r.diffPct.toFixed(2),
+                  r.diffAmount ?? "",
+                  r.pipelineAmount ?? "",
+                  r.pipelineMonth || "",
+                  r.engaged ? "Engaged" : "Not Engaged",
+                  r.platform || "",
+                  r.spoc || "",
+                  r.kam || "",
+                  r.donorType || "",
+                  r.category || "",
+                ])
+              )
+            }
+          />
         </div>
 
         <div className="overflow-x-auto">
@@ -605,7 +710,9 @@ export default function EngagementStatusModule() {
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">Percentage (%)</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">Amount Difference (₹)</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">Pipeline Amount (₹)</th>
-                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">Pipeline Month</th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <PipelineOnlyToggle active={pipelineOnly} onClick={() => setPipelineOnly((v) => !v)} />
+                </th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">
                   <ColumnFilterMenu {...filterMenuProps("engaged", "Engagement Status")} />
                 </th>

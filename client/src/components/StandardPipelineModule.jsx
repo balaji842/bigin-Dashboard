@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { moneyCr, fullMoney } from "../lib/format.js";
+import ExportButton from "./ExportButton.jsx";
+import ClearFiltersBar from "./ClearFiltersBar.jsx";
+import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
+import { filterRows } from "../lib/donorRows.js";
 
 // Cash / Kind / School Engagement pill filter — same pattern as the
 // Conversion and FY Comparison pages. `selected: null` means "everything".
@@ -31,27 +35,59 @@ function FilterGroup({ label, options, selected, onToggle }) {
   );
 }
 
+// `onDonorsClick` (optional) makes just the donor-count line open a
+// drilldown, independent of the card's own onClick (scope toggle) — div
+// instead of a button as the outer element so the two click targets
+// don't nest one button inside another.
+function KpiDonorsLine({ donors, onDonorsClick }) {
+  if (!onDonorsClick) {
+    return <p className="text-xs text-slate-400 mt-1">{donors} unique donors</p>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (donors > 0) onDonorsClick();
+      }}
+      disabled={donors === 0}
+      className={`text-xs mt-1 font-semibold ${
+        donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+      }`}
+    >
+      {donors} unique donors
+    </button>
+  );
+}
+
 // Clickable when given an onClick — acts as one of 2 mutually-exclusive
 // scope selectors (FY total / current month), same pattern as the
 // Conversion page's KPI cards.
-function KpiCard({ label, amount, donors, accent = "pink", active, onClick }) {
+function KpiCard({ label, amount, donors, accent = "pink", active, onClick, onDonorsClick }) {
   const theme = { pink: "text-pink-600", navy: "text-navy-700", emerald: "text-emerald-600" }[accent];
   const clickable = typeof onClick === "function";
-  const Tag = clickable ? "button" : "div";
   return (
-    <Tag
-      type={clickable ? "button" : undefined}
-      onClick={onClick}
+    <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? onClick : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") onClick();
+            }
+          : undefined
+      }
       className={`text-left rounded-2xl border shadow-sm p-5 transition-colors w-full ${
         active
           ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200"
-          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200" : "")
+          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200 cursor-pointer" : "")
       }`}
     >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">{label}</p>
       <p className={`font-display text-2xl font-bold ${active ? "text-pink-600" : theme}`}>{moneyCr(amount)}</p>
-      <p className="text-xs text-slate-400 mt-1">{donors} unique donors</p>
-    </Tag>
+      <KpiDonorsLine donors={donors} onDonorsClick={onDonorsClick} />
+    </div>
   );
 }
 
@@ -75,7 +111,7 @@ function groupByField(rows, field) {
 
 // Full-table breakdown card (title + navy-headed table) — used for By
 // Donor Type / By KAM / By Platform, matching the Conversion page.
-function BreakdownTable({ title, nameLabel, rows }) {
+function BreakdownTable({ title, nameLabel, rows, onDonorsClick }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
       <p className="font-display font-bold text-navy-900 text-base mb-3">{title}</p>
@@ -100,7 +136,22 @@ function BreakdownTable({ title, nameLabel, rows }) {
                 <td className="px-4 py-2.5 align-top text-center font-bold text-navy-900 whitespace-nowrap">
                   {moneyCr(r.amount)}
                 </td>
-                <td className="px-4 py-2.5 align-top text-center text-slate-400">{r.donors}</td>
+                <td className="px-4 py-2.5 align-top text-center whitespace-nowrap">
+                  {onDonorsClick ? (
+                    <button
+                      type="button"
+                      onClick={() => r.donors > 0 && onDonorsClick(r.name)}
+                      disabled={r.donors === 0}
+                      className={`font-semibold ${
+                        r.donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+                      }`}
+                    >
+                      {r.donors}
+                    </button>
+                  ) : (
+                    <span className="text-slate-400">{r.donors}</span>
+                  )}
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (
@@ -146,7 +197,7 @@ function toCsvValue(v) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function downloadCsv(rows) {
+function downloadPipelineDonorHistoryCsv(rows) {
   const header = ["S.No", "Name", "Amount", "Expected Month", "Type", "Donor Type", "KAM", "SPOC"];
   const lines = [header.join(",")];
   rows.forEach((r, i) => {
@@ -234,12 +285,7 @@ function DonorHistoryTable({ rows, subtitle }) {
           >
             Filter
           </button>
-          <button
-            onClick={() => downloadCsv(filtered)}
-            className="text-sm font-semibold px-3 py-2 rounded-lg border border-slate-200 text-navy-700 hover:border-slate-300"
-          >
-            Export
-          </button>
+          <ExportButton onClick={() => downloadPipelineDonorHistoryCsv(filtered)} disabled={filtered.length === 0} />
         </div>
       </div>
 
@@ -393,6 +439,11 @@ export default function StandardPipelineModule() {
   // pipeline.
   const [scope, setScope] = useState("total"); // "total" | "month"
 
+  // Generic donor-list popup for any donor count on this page (KPI
+  // cards, breakdown table rows, Projected Conversion Month table).
+  const [drilldown, setDrilldown] = useState(null); // { title, rows } | null
+  const openDrilldown = (title, rows) => setDrilldown({ title, rows });
+
   const toggleType = (value) => {
     setSelectedTypes((current) => {
       const all = filterOptions.types;
@@ -461,6 +512,27 @@ export default function StandardPipelineModule() {
     };
   }, [data, scope]);
 
+  // Zero-amount, zero-donor months are hidden from the Projected
+  // Conversion Month table — computed once here so the same array
+  // backs both the on-screen rows and the CSV export (export always
+  // matches what's actually visible).
+  const visibleMonthWise = useMemo(() => {
+    if (!scoped) return [];
+    return scoped.monthWise.filter((m) => m.amount !== 0 || m.donors !== 0);
+  }, [scoped]);
+
+  const hasActiveFilters = selectedTypes != null || scope !== "total";
+  const clearAllFilters = () => {
+    setSelectedTypes(null);
+    setScope("total");
+  };
+  const filterSummary = [
+    selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
+    scope === "month" ? `Scope: ${data?.currentMonth?.name || "Current"} Month` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   const filterBar = (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
       <FilterGroup
@@ -475,6 +547,7 @@ export default function StandardPipelineModule() {
   if (loading && !data) {
     return (
       <div className="space-y-5 sm:space-y-6">
+        <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
         {filterBar}
         <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center text-slate-400 text-sm">
           Loading standard pipeline…
@@ -486,6 +559,7 @@ export default function StandardPipelineModule() {
   if (error) {
     return (
       <div className="space-y-5 sm:space-y-6">
+        <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
         {filterBar}
         <div className="bg-red-50 text-red-600 text-sm rounded-xl p-4 border border-red-100">
           Couldn't load standard pipeline: {error}
@@ -496,6 +570,7 @@ export default function StandardPipelineModule() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
+      <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
       {filterBar}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -506,6 +581,7 @@ export default function StandardPipelineModule() {
           accent="pink"
           active={scope === "total"}
           onClick={() => setScope("total")}
+          onDonorsClick={() => openDrilldown(`Total Pipeline ${data.fy}`, filterRows(data.table, () => true))}
         />
         <KpiCard
           label={`${data.currentMonth.name} Month Pipeline`}
@@ -514,6 +590,12 @@ export default function StandardPipelineModule() {
           accent="navy"
           active={scope === "month"}
           onClick={() => setScope("month")}
+          onDonorsClick={() =>
+            openDrilldown(
+              `${data.currentMonth.name} Month Pipeline`,
+              filterRows(data.table, (r) => r.expectedMonth === data.currentMonth.name)
+            )
+          }
         />
       </div>
 
@@ -525,10 +607,29 @@ export default function StandardPipelineModule() {
 
           <div className="grid gap-4 md:grid-cols-2 items-start">
             <div className="flex flex-col gap-4">
-              <BreakdownTable title="By Platform" nameLabel="Platform" rows={scoped.byPlatform} />
-              <BreakdownTable title="By Donor Type" nameLabel="Donor Type" rows={scoped.byDonorType} />
+              <BreakdownTable
+                title="By Platform"
+                nameLabel="Platform"
+                rows={scoped.byPlatform}
+                onDonorsClick={(name) =>
+                  openDrilldown(`Platform: ${name}`, filterRows(scoped.table, (r) => r.platform === name))
+                }
+              />
+              <BreakdownTable
+                title="By Donor Type"
+                nameLabel="Donor Type"
+                rows={scoped.byDonorType}
+                onDonorsClick={(name) =>
+                  openDrilldown(`Donor Type: ${name}`, filterRows(scoped.table, (r) => r.donorType === name))
+                }
+              />
             </div>
-            <BreakdownTable title="By KAM" nameLabel="KAM" rows={scoped.byKAM} />
+            <BreakdownTable
+              title="By KAM"
+              nameLabel="KAM"
+              rows={scoped.byKAM}
+              onDonorsClick={(name) => openDrilldown(`KAM: ${name}`, filterRows(scoped.table, (r) => r.kam === name))}
+            />
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
@@ -549,16 +650,28 @@ export default function StandardPipelineModule() {
                   </tr>
                 </thead>
                 <tbody>
-                  {scoped.monthWise
-                    .filter((m) => m.amount !== 0 || m.donors !== 0)
-                    .map((m, i) => (
-                      <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                        <td className="px-4 py-2 text-navy-900 font-medium">{m.name}</td>
-                        <td className="px-4 py-2 text-right">{moneyCr(m.amount)}</td>
-                        <td className="px-4 py-2 text-right text-slate-500">{m.donors}</td>
-                      </tr>
-                    ))}
-                  {scoped.monthWise.filter((m) => m.amount !== 0 || m.donors !== 0).length === 0 && (
+                  {visibleMonthWise.map((m, i) => (
+                    <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
+                      <td className="px-4 py-2 text-navy-900 font-medium">{m.name}</td>
+                      <td className="px-4 py-2 text-right">{moneyCr(m.amount)}</td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            m.donors > 0 &&
+                            openDrilldown(m.name, filterRows(scoped.table, (r) => r.expectedMonth === m.name))
+                          }
+                          disabled={m.donors === 0}
+                          className={`font-semibold ${
+                            m.donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+                          }`}
+                        >
+                          {m.donors}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {visibleMonthWise.length === 0 && (
                     <tr>
                       <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
                         No standard pipeline donors with an expected month set
@@ -580,6 +693,13 @@ export default function StandardPipelineModule() {
           />
         </>
       )}
+
+      <DonorDrilldownModal
+        open={!!drilldown}
+        onClose={() => setDrilldown(null)}
+        title={drilldown?.title}
+        donors={drilldown?.rows || []}
+      />
     </div>
   );
 }

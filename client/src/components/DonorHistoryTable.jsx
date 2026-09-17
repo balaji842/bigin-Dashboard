@@ -1,19 +1,14 @@
 import { useMemo, useState } from "react";
 import { moneyCr } from "../lib/format.js";
+import { downloadCsv } from "../lib/csvExport.js";
+import ExportButton from "./ExportButton.jsx";
+import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
 
 function IconSearch(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
       <circle cx="11" cy="11" r="7" />
       <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function IconFilter(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3Z" />
     </svg>
   );
 }
@@ -64,31 +59,40 @@ const PAGE_SIZE = 10;
 
 export default function DonorHistoryTable({ donors, onSelectDonor }) {
   const [search, setSearch] = useState("");
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [donorTypeFilter, setDonorTypeFilter] = useState(null); // null = all
+  // Multi-select per column — null means "everything" for that column.
+  const [filters, setFilters] = useState({ donorType: null, kam: null, spoc: null });
   const [page, setPage] = useState(0);
 
-  const donorTypeOptions = useMemo(() => {
-    const set = new Set();
-    donors.forEach((d) => {
-      if (d.donorType && d.donorType !== "—") {
-        d.donorType.split(",").forEach((t) => set.add(t.trim()));
-      }
-    });
-    return [...set].sort();
-  }, [donors]);
+  // Options are always computed from the full `donors` prop (not the
+  // filtered set), so a column's checkbox list never shrinks as other
+  // filters get applied.
+  const donorTypeOptions = useMemo(() => optionsFor(donors, "donorType"), [donors]);
+  const kamOptions = useMemo(() => optionsFor(donors, "kam"), [donors]);
+  const spocOptions = useMemo(() => optionsFor(donors, "spoc"), [donors]);
+  const optionsByField = { donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions };
+  const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPage, optionsByField);
 
   const filtered = useMemo(() => {
     let out = donors;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      out = out.filter((d) => d.account.toLowerCase().includes(q));
+      // Search the donor's name AND the columns actually shown next to
+      // it (Donor Type, KAM, SPOC) — not just the name — so typing a
+      // Donor Type like "corporate" finds every donor with that badge,
+      // not only ones whose literal name happens to contain the word.
+      out = out.filter((d) => {
+        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""}`.toLowerCase();
+        return hay.includes(q);
+      });
     }
-    if (donorTypeFilter) {
-      out = out.filter((d) => d.donorType.includes(donorTypeFilter));
-    }
+    out = out.filter(
+      (d) =>
+        matchesFilter(d.donorType, filters.donorType) &&
+        matchesFilter(d.kam, filters.kam) &&
+        matchesFilter(d.spoc, filters.spoc)
+    );
     return out;
-  }, [donors, search, donorTypeFilter]);
+  }, [donors, search, filters]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -96,11 +100,6 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
 
   const updateSearch = (v) => {
     setSearch(v);
-    setPage(0);
-  };
-
-  const toggleDonorType = (type) => {
-    setDonorTypeFilter((prev) => (prev === type ? null : type));
     setPage(0);
   };
 
@@ -116,6 +115,14 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
   const from = filtered.length === 0 ? 0 : safePage * PAGE_SIZE + 1;
   const to = Math.min(filtered.length, (safePage + 1) * PAGE_SIZE);
 
+  const handleExport = () => {
+    downloadCsv(
+      "donor-history.csv",
+      ["S.No", "Donor Name", "Total Amount", "Donor Type", "KAM", "SPOC"],
+      filtered.map((d, i) => [i + 1, d.account, d.totalAmount, d.donorType, d.kam, d.spoc])
+    );
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-visible">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-5 pb-4">
@@ -124,63 +131,15 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
           <p className="text-sm text-slate-400">List of donors and their contribution details</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <ExportButton onClick={handleExport} disabled={filtered.length === 0} />
           <div className="relative">
             <IconSearch className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               value={search}
               onChange={(e) => updateSearch(e.target.value)}
-              placeholder="Search by donor name..."
+              placeholder="Search name, donor type, KAM or SPOC..."
               className="pl-9 pr-3 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-pink-400/60 focus:border-pink-400 w-56"
             />
-          </div>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setFilterOpen((v) => !v)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-xl border transition-colors ${
-                donorTypeFilter
-                  ? "border-pink-300 text-pink-600 bg-pink-50/60"
-                  : "border-slate-200 text-navy-700 hover:border-slate-300"
-              }`}
-            >
-              <IconFilter className="w-4 h-4" />
-              Filter
-            </button>
-            {filterOpen && (
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl border border-slate-100 shadow-lg p-3 z-10">
-                <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">
-                  Donor Type
-                </p>
-                <div className="flex flex-col gap-1">
-                  <button
-                    onClick={() => {
-                      setDonorTypeFilter(null);
-                      setFilterOpen(false);
-                      setPage(0);
-                    }}
-                    className={`text-left text-sm px-2 py-1.5 rounded-lg ${
-                      !donorTypeFilter ? "bg-pink-50 text-pink-600 font-medium" : "text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    All types
-                  </button>
-                  {donorTypeOptions.map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => {
-                        toggleDonorType(type);
-                        setFilterOpen(false);
-                      }}
-                      className={`text-left text-sm px-2 py-1.5 rounded-lg ${
-                        donorTypeFilter === type ? "bg-pink-50 text-pink-600 font-medium" : "text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -192,9 +151,36 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
               <th className="px-5 py-3 font-semibold">S.No</th>
               <th className="px-5 py-3 font-semibold">Donor Name</th>
               <th className="px-5 py-3 font-semibold text-right">Total Amount</th>
-              <th className="px-5 py-3 font-semibold">Donor Type</th>
-              <th className="px-5 py-3 font-semibold">KAM</th>
-              <th className="px-5 py-3 font-semibold">SPOC</th>
+              <th className="px-5 py-3 font-semibold">
+                <HeaderFilterMenu
+                  label="Donor Type"
+                  options={donorTypeOptions}
+                  selected={filters.donorType}
+                  onToggle={toggleOption("donorType")}
+                  onSelectAll={selectAll("donorType")}
+                  onClearAll={clearAll("donorType")}
+                />
+              </th>
+              <th className="px-5 py-3 font-semibold">
+                <HeaderFilterMenu
+                  label="KAM"
+                  options={kamOptions}
+                  selected={filters.kam}
+                  onToggle={toggleOption("kam")}
+                  onSelectAll={selectAll("kam")}
+                  onClearAll={clearAll("kam")}
+                />
+              </th>
+              <th className="px-5 py-3 font-semibold">
+                <HeaderFilterMenu
+                  label="SPOC"
+                  options={spocOptions}
+                  selected={filters.spoc}
+                  onToggle={toggleOption("spoc")}
+                  onSelectAll={selectAll("spoc")}
+                  onClearAll={clearAll("spoc")}
+                />
+              </th>
             </tr>
           </thead>
           <tbody>

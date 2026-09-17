@@ -2,56 +2,102 @@ import { useEffect, useMemo, useState } from "react";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import DonorHistoryTable from "./DonorHistoryTable.jsx";
 import DonorHistoryModal from "./DonorHistoryModal.jsx";
+import ClearFiltersBar from "./ClearFiltersBar.jsx";
+import { isApprovedOpenPipelineRow, filterRows } from "../lib/donorRows.js";
 import { moneyCr } from "../lib/format.js";
 
-function KpiCard({ label, amount, donors, accent = "pink", active, onClick }) {
+// `onDonorsClick` (optional) makes just the donor-count line open a
+// drilldown, independent of the card's own onClick (which toggles this
+// card in/out of the FY/Donor Type selection) — the outer element is a
+// div rather than a button so the two click targets don't nest one
+// button inside another.
+function DonorsLine({ donors, onDonorsClick }) {
+  if (!onDonorsClick) {
+    return <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} Donors</p>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (donors > 0) onDonorsClick();
+      }}
+      disabled={donors === 0}
+      className={`text-xs font-semibold mt-1 ${
+        donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+      }`}
+    >
+      {donors} Donors
+    </button>
+  );
+}
+
+function KpiCard({ label, amount, donors, accent = "pink", active, onClick, onDonorsClick }) {
   const theme = { pink: "text-pink-600", navy: "text-navy-700", emerald: "text-emerald-600" }[accent];
   const clickable = typeof onClick === "function";
-  const Tag = clickable ? "button" : "div";
   return (
-    <Tag
-      type={clickable ? "button" : undefined}
-      onClick={onClick}
+    <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? onClick : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") onClick();
+            }
+          : undefined
+      }
       className={`text-left rounded-2xl border shadow-sm p-5 transition-colors w-full ${
         active
           ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200"
-          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200" : "")
+          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200 cursor-pointer" : "")
       }`}
     >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">{label}</p>
       <p className={`font-display text-2xl font-bold ${active ? "text-pink-600" : theme}`}>{moneyCr(amount)}</p>
-      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} Donors</p>
-    </Tag>
+      <DonorsLine donors={donors} onDonorsClick={onDonorsClick} />
+    </div>
   );
 }
 
-function FYCard({ year, amount, donors, active, onClick }) {
+function FYCard({ year, amount, donors, active, onClick, onDonorsClick }) {
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`text-left rounded-2xl border shadow-sm p-4 transition-colors ${
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onClick();
+      }}
+      className={`text-left rounded-2xl border shadow-sm p-4 transition-colors cursor-pointer ${
         active ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200" : "border-slate-100 bg-white hover:border-slate-200"
       }`}
     >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">FY {year}</p>
       <p className={`font-display text-xl font-bold ${active ? "text-pink-600" : "text-navy-700"}`}>{moneyCr(amount)}</p>
-      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} Donors</p>
-    </button>
+      <DonorsLine donors={donors} onDonorsClick={onDonorsClick} />
+    </div>
   );
 }
 
-function MiniStatCard({ name, amount, donors, active, onClick }) {
+function MiniStatCard({ name, amount, donors, active, onClick, onDonorsClick }) {
   const clickable = typeof onClick === "function";
-  const Tag = clickable ? "button" : "div";
   return (
-    <Tag
-      type={clickable ? "button" : undefined}
-      onClick={onClick}
+    <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? onClick : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") onClick();
+            }
+          : undefined
+      }
       className={`text-left rounded-xl border shadow-sm p-4 min-w-0 w-full transition-colors ${
         active
           ? "border-pink-300 bg-pink-50/60 ring-1 ring-pink-200"
-          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200" : "")
+          : "border-slate-100 bg-white " + (clickable ? "hover:border-slate-200 cursor-pointer" : "")
       }`}
     >
       <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2 break-words" title={name}>
@@ -60,8 +106,8 @@ function MiniStatCard({ name, amount, donors, active, onClick }) {
       <p className={`font-display text-lg font-bold ${active ? "text-pink-600" : "text-navy-900"}`}>
         {moneyCr(amount)}
       </p>
-      <p className="text-xs text-emerald-600 font-semibold mt-1">{donors} donors</p>
-    </Tag>
+      <DonorsLine donors={donors} onDonorsClick={onDonorsClick} />
+    </div>
   );
 }
 
@@ -139,17 +185,19 @@ function monthNameOf(closingDate) {
   return isNaN(d) ? null : d.toLocaleString("en-US", { month: "long" });
 }
 
-// fy can be "ALL" here too — in that case donors aren't scoped to a
-// single fiscal year for the clicked month, and the "history" list for
-// each donor excludes only that exact deal (by reference) rather than
-// excluding "the currently selected FY".
-function buildMonthDonors(table, monthName, fy) {
+// fys can be "ALL" here too — in that case donors aren't scoped to a
+// particular fiscal year for the clicked month, and the "history" list
+// for each donor excludes only that exact deal (by reference) rather
+// than excluding "the currently selected FY(s)". Otherwise fys is an
+// array of one or more selected fiscal years.
+function buildMonthDonors(table, monthName, fys) {
+  const isAll = fys === "ALL";
   const rowsThisMonth = table.filter(
     (r) =>
       r.subPipeline !== "Standard Pipeline" &&
       r.closingDate &&
       monthNameOf(r.closingDate) === monthName &&
-      (fy === "ALL" || r.fiscalYear === fy)
+      (isAll || fys.includes(r.fiscalYear))
   );
 
   return rowsThisMonth.map((r) => {
@@ -159,7 +207,7 @@ function buildMonthDonors(table, monthName, fy) {
           h.account === r.account &&
           h.subPipeline !== "Standard Pipeline" &&
           h.closingDate &&
-          (fy === "ALL" ? h !== r : h.fiscalYear !== fy)
+          (isAll ? h !== r : !fys.includes(h.fiscalYear))
       )
       .map((h) => ({ fiscalYear: h.fiscalYear, amount: h.amount, month: monthNameOf(h.closingDate) }))
       .sort((a, b) => (b.fiscalYear || "").localeCompare(a.fiscalYear || ""));
@@ -167,20 +215,56 @@ function buildMonthDonors(table, monthName, fy) {
   });
 }
 
+// Short display label for whichever FY(s) are currently selected —
+// "All Years" when nothing's selected, "FY 2026-2027" for one, or
+// "FY 2025-2026, 2026-2027" when several are combined.
+function fyLabel(fys) {
+  return fys === "ALL" || !fys || fys.length === 0 ? "All Years" : `FY ${fys.join(", ")}`;
+}
+
 export default function CRMOverview() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [fy, setFy] = useState("ALL");
   const [modalMonth, setModalMonth] = useState(null);
   const [modalDonor, setModalDonor] = useState(null);
+  // Generic donor-list popup for every OTHER donor count on this page
+  // (KPI cards, FY cards, Donor Type cards) — the Month-wise table's
+  // count keeps its own modalMonth/monthDonors path above since that
+  // one already worked before this was added.
+  const [drilldown, setDrilldown] = useState(null); // { title, rows } | null
+  const openDrilldown = (title, rows) => setDrilldown({ title, rows });
 
   const [typeOptions, setTypeOptions] = useState([]);
   const [selectedTypes, setSelectedTypes] = useState(null);
-  const [selectedDonorType, setSelectedDonorType] = useState(null);
+
+  // Multi-select: null means nothing picked (FY side = "every year
+  // combined", Donor Type side = "every type"). Clicking a card toggles
+  // it in/out of the array; clicking the last remaining one resets back
+  // to null rather than leaving an empty array around.
+  const [selectedFYs, setSelectedFYs] = useState(null);
+  const [selectedDonorTypes, setSelectedDonorTypes] = useState(null);
+
+  const toggleFY = (year) => {
+    setSelectedFYs((prev) => {
+      const base = prev || [];
+      const next = base.includes(year) ? base.filter((y) => y !== year) : [...base, year];
+      return next.length === 0 ? null : next;
+    });
+  };
 
   const toggleDonorType = (name) => {
-    setSelectedDonorType((prev) => (prev === name ? null : name));
+    setSelectedDonorTypes((prev) => {
+      const base = prev || [];
+      const next = base.includes(name) ? base.filter((n) => n !== name) : [...base, name];
+      return next.length === 0 ? null : next;
+    });
+  };
+
+  const hasActiveFilters = selectedFYs != null || selectedDonorTypes != null;
+  const clearAllFilters = () => {
+    setSelectedFYs(null);
+    setSelectedDonorTypes(null);
   };
 
   useEffect(() => {
@@ -203,9 +287,10 @@ export default function CRMOverview() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams({ fy });
+    const params = new URLSearchParams();
+    params.set("fy", selectedFYs && selectedFYs.length > 0 ? selectedFYs.join(",") : "ALL");
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
-    if (selectedDonorType) params.set("donorType", selectedDonorType);
+    if (selectedDonorTypes && selectedDonorTypes.length > 0) params.set("donorTypes", selectedDonorTypes.join(","));
     fetch(`/api/crm-analysis/overview?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -214,7 +299,7 @@ export default function CRMOverview() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [fy, selectedTypes, selectedDonorType]);
+  }, [selectedFYs, selectedTypes, selectedDonorTypes]);
 
   const monthDonors = useMemo(() => {
     if (!data || !modalMonth) return [];
@@ -255,6 +340,18 @@ export default function CRMOverview() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
+      <ClearFiltersBar
+        active={hasActiveFilters}
+        onClear={clearAllFilters}
+        emptyText="No filters applied — showing every fiscal year and donor type"
+        summary={[
+          selectedFYs != null ? `FY ${selectedFYs.join(", ")}` : null,
+          selectedDonorTypes != null ? `Donor Type: ${selectedDonorTypes.join(", ")}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+      />
+
       <TypeFilterPills options={typeOptions} selected={selectedTypes} onToggle={toggleType} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -263,21 +360,42 @@ export default function CRMOverview() {
           amount={data.closed.allTime.amount}
           donors={data.closed.allTime.donors}
           accent="emerald"
-          active={fy === "ALL"}
-          onClick={() => setFy("ALL")}
+          active={selectedFYs == null}
+          onClick={() => setSelectedFYs(null)}
+          onDonorsClick={() =>
+            openDrilldown(
+              "Total Conversion FY 2022-2027",
+              filterRows(data.table, (r) => r.subPipeline !== "Standard Pipeline")
+            )
+          }
         />
         <KpiCard
           label="Pipeline 2026-2027"
           amount={data.pipeline2027Approved.amount}
           donors={data.pipeline2027Approved.donors}
           accent="navy"
+          onDonorsClick={() =>
+            openDrilldown(
+              "Pipeline 2026-2027",
+              filterRows(
+                data.table,
+                (r) => r.subPipeline === "Standard Pipeline" && r.fiscalYear === "2026-2027" && isApprovedOpenPipelineRow(r)
+              )
+            )
+          }
         />
         <FYCard
           year={fy2027.name}
           amount={fy2027.amount}
           donors={fy2027.donors}
-          active={fy2027.name === fy}
-          onClick={() => setFy(fy2027.name)}
+          active={selectedFYs != null && selectedFYs.includes(fy2027.name)}
+          onClick={() => toggleFY(fy2027.name)}
+          onDonorsClick={() =>
+            openDrilldown(
+              `FY ${fy2027.name}`,
+              filterRows(data.table, (r) => r.subPipeline !== "Standard Pipeline" && r.fiscalYear === fy2027.name)
+            )
+          }
         />
       </div>
 
@@ -290,8 +408,14 @@ export default function CRMOverview() {
               year={y.name}
               amount={y.amount}
               donors={y.donors}
-              active={y.name === fy}
-              onClick={() => setFy(y.name)}
+              active={selectedFYs != null && selectedFYs.includes(y.name)}
+              onClick={() => toggleFY(y.name)}
+              onDonorsClick={() =>
+                openDrilldown(
+                  `FY ${y.name}`,
+                  filterRows(data.table, (r) => r.subPipeline !== "Standard Pipeline" && r.fiscalYear === y.name)
+                )
+              }
             />
           ))}
           {otherYears.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
@@ -302,10 +426,10 @@ export default function CRMOverview() {
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
           <div className="bg-navy-900 text-white px-5 py-3">
             <p className="font-display font-semibold text-sm">
-              {data.fy === "ALL"
+              {selectedFYs == null
                 ? "Month-wise (All Fiscal Years, 2022-2027 combined)"
-                : `Month-wise (FY ${data.fy}) — April to March`}
-              {selectedDonorType ? ` · ${selectedDonorType}` : ""}
+                : `Month-wise (FY ${selectedFYs.join(", ")}) — April to March`}
+              {selectedDonorTypes != null ? ` · ${selectedDonorTypes.join(", ")}` : ""}
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -345,10 +469,10 @@ export default function CRMOverview() {
         <div className="lg:col-span-1">
           <div className="flex items-center justify-between mb-1">
             <p className="font-display font-semibold text-navy-900 text-sm">By Donor Type</p>
-            {selectedDonorType && (
+            {selectedDonorTypes != null && (
               <button
                 type="button"
-                onClick={() => setSelectedDonorType(null)}
+                onClick={() => setSelectedDonorTypes(null)}
                 className="text-xs text-pink-600 font-semibold hover:underline"
               >
                 Clear
@@ -356,7 +480,7 @@ export default function CRMOverview() {
             )}
           </div>
           <p className="text-xs text-slate-400 mb-3">
-            {data.fy === "ALL" ? "Across all fiscal years (2022-2027)" : `FY ${data.fy}`}
+            {selectedFYs == null ? "Across all fiscal years (2022-2027)" : `FY ${selectedFYs.join(", ")}`}
             {" · click a card to filter"}
           </p>
           <div className="grid grid-cols-2 gap-3">
@@ -366,8 +490,20 @@ export default function CRMOverview() {
                 name={r.name}
                 amount={r.amount}
                 donors={r.donors}
-                active={selectedDonorType === r.name}
+                active={selectedDonorTypes != null && selectedDonorTypes.includes(r.name)}
                 onClick={() => toggleDonorType(r.name)}
+                onDonorsClick={() =>
+                  openDrilldown(
+                    `Donor Type: ${r.name}`,
+                    filterRows(
+                      data.table,
+                      (row) =>
+                        row.subPipeline !== "Standard Pipeline" &&
+                        row.donorType === r.name &&
+                        (selectedFYs == null || selectedFYs.includes(row.fiscalYear))
+                    )
+                  )
+                }
               />
             ))}
             {data.byDonorType.length === 0 && <p className="text-xs text-slate-400 col-span-full">No data</p>}
@@ -381,8 +517,15 @@ export default function CRMOverview() {
         open={!!modalMonth}
         onClose={() => setModalMonth(null)}
         monthName={modalMonth}
-        fy={data.fy}
+        fy={fyLabel(data.fy)}
         donors={monthDonors}
+      />
+
+      <DonorDrilldownModal
+        open={!!drilldown}
+        onClose={() => setDrilldown(null)}
+        title={drilldown?.title}
+        donors={drilldown?.rows || []}
       />
 
       <DonorHistoryModal
