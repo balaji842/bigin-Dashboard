@@ -604,8 +604,9 @@ export default function CloseddonorsModule() {
   const [prevYearData, setPrevYearData] = useState(null);
 
   // Cash / Kind / School Engagement filter. null = everything selected.
-  const [filterOptions, setFilterOptions] = useState({ types: [] });
+  const [filterOptions, setFilterOptions] = useState({ types: [], platforms: [] });
   const [selectedTypes, setSelectedTypes] = useState(null);
+  const [selectedPlatforms, setSelectedPlatforms] = useState(null);
 
   // Which of the 3 top KPI cards is the active data scope — everything
   // below (breakdown tables, month-wise table, Donor History) follows
@@ -635,6 +636,7 @@ export default function CloseddonorsModule() {
       try {
         const params = new URLSearchParams({ fy: FY });
         if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+        if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
         const res = await fetch(`/api/crm-analysis/standard-pipeline?${params.toString()}`);
         if (res.ok) {
           pd = await res.json();
@@ -658,13 +660,24 @@ export default function CloseddonorsModule() {
     });
   };
 
+  const togglePlatform = (value) => {
+    setSelectedPlatforms((current) => {
+      const all = filterOptions.platforms;
+      const base = current == null ? all : current;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      if (next.length === 0) return current;
+      if (next.length === all.length) return null;
+      return next;
+    });
+  };
+
   useEffect(() => {
     fetch(`/api/crm-analysis/filter-options`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((json) => setFilterOptions({ types: json.types || [] }))
+      .then((json) => setFilterOptions({ types: json.types || [], platforms: json.platforms || [] }))
       .catch(() => {
         /* Filter pills just won't render if this fails — non-fatal. */
       });
@@ -675,6 +688,7 @@ export default function CloseddonorsModule() {
     setError(null);
     const params = new URLSearchParams({ fy: FY });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
     fetch(`/api/crm-analysis/closed-donors?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -683,13 +697,14 @@ export default function CloseddonorsModule() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [selectedTypes]);
+  }, [selectedTypes, selectedPlatforms]);
 
   // Fetched separately, purely to draw the prior-year line on the trend
   // chart — this page otherwise stays scoped to FY 2026-27 only.
   useEffect(() => {
     const params = new URLSearchParams({ fy: PREV_FY });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
     fetch(`/api/crm-analysis/closed-donors?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -699,7 +714,7 @@ export default function CloseddonorsModule() {
       .catch(() => {
         /* Chart just renders with the current-FY line only if this fails. */
       });
-  }, [selectedTypes]);
+  }, [selectedTypes, selectedPlatforms]);
 
   // The open-pipeline breakdown is only fetched once the "Total
   // Pipeline" card is actually selected — no point paying for it
@@ -710,6 +725,7 @@ export default function CloseddonorsModule() {
     setPipelineError(null);
     const params = new URLSearchParams({ fy: FY });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
     fetch(`/api/crm-analysis/standard-pipeline?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -718,7 +734,7 @@ export default function CloseddonorsModule() {
       .then(setPipelineData)
       .catch((e) => setPipelineError(e.message))
       .finally(() => setPipelineLoading(false));
-  }, [scope, selectedTypes]);
+  }, [scope, selectedTypes, selectedPlatforms]);
 
   // The data actually driving the breakdown tables / month-wise table /
   // Donor History — swaps with the selected scope. "month" is derived
@@ -783,13 +799,15 @@ export default function CloseddonorsModule() {
     }));
   }, [data, prevYearData]);
 
-  const hasActiveFilters = selectedTypes != null || scope !== "fy";
+  const hasActiveFilters = selectedTypes != null || selectedPlatforms != null || scope !== "fy";
   const clearAllFilters = () => {
     setSelectedTypes(null);
+    setSelectedPlatforms(null);
     setScope("fy");
   };
   const filterSummary = [
     selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
+    selectedPlatforms != null ? `Platform: ${selectedPlatforms.join(", ")}` : null,
     scope === "pipeline"
       ? "Scope: Total Pipeline"
       : scope === "month"
@@ -800,12 +818,18 @@ export default function CloseddonorsModule() {
     .join(" · ");
 
   const filterBar = (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-3">
       <FilterGroup
         label="Type"
         options={filterOptions.types}
         selected={selectedTypes}
         onToggle={toggleType}
+      />
+      <FilterGroup
+        label="Platform"
+        options={filterOptions.platforms}
+        selected={selectedPlatforms}
+        onToggle={togglePlatform}
       />
     </div>
   );

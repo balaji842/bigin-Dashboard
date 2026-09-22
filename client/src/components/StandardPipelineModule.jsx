@@ -468,8 +468,9 @@ export default function StandardPipelineModule() {
   const [error, setError] = useState(null);
 
   // Cash / Kind / School Engagement filter. null = everything selected.
-  const [filterOptions, setFilterOptions] = useState({ types: [] });
+  const [filterOptions, setFilterOptions] = useState({ types: [], platforms: [] });
   const [selectedTypes, setSelectedTypes] = useState(null);
+  const [selectedPlatforms, setSelectedPlatforms] = useState(null);
 
   // Which KPI card is the active data scope — everything below
   // (breakdown tables, Projected Conversion Month table, Donor History)
@@ -495,13 +496,24 @@ export default function StandardPipelineModule() {
     });
   };
 
+  const togglePlatform = (value) => {
+    setSelectedPlatforms((current) => {
+      const all = filterOptions.platforms;
+      const base = current == null ? all : current;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      if (next.length === 0) return current;
+      if (next.length === all.length) return null;
+      return next;
+    });
+  };
+
   useEffect(() => {
     fetch(`/api/crm-analysis/filter-options`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((json) => setFilterOptions({ types: json.types || [] }))
+      .then((json) => setFilterOptions({ types: json.types || [], platforms: json.platforms || [] }))
       .catch(() => {
         /* Filter pills just won't render if this fails — non-fatal. */
       });
@@ -512,6 +524,7 @@ export default function StandardPipelineModule() {
     setError(null);
     const params = new URLSearchParams({ fy: FY });
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
     fetch(`/api/crm-analysis/standard-pipeline?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -520,7 +533,7 @@ export default function StandardPipelineModule() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [selectedTypes]);
+  }, [selectedTypes, selectedPlatforms]);
 
   // The data actually driving the breakdown tables / Projected
   // Conversion Month table / Donor History — swaps with the selected
@@ -561,25 +574,33 @@ export default function StandardPipelineModule() {
     return scoped.monthWise.filter((m) => m.amount !== 0 || m.donors !== 0);
   }, [scoped]);
 
-  const hasActiveFilters = selectedTypes != null || scope !== "total";
+  const hasActiveFilters = selectedTypes != null || selectedPlatforms != null || scope !== "total";
   const clearAllFilters = () => {
     setSelectedTypes(null);
+    setSelectedPlatforms(null);
     setScope("total");
   };
   const filterSummary = [
     selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
+    selectedPlatforms != null ? `Platform: ${selectedPlatforms.join(", ")}` : null,
     scope === "month" ? `Scope: ${data?.currentMonth?.name || "Current"} Month` : null,
   ]
     .filter(Boolean)
     .join(" · ");
 
   const filterBar = (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-3">
       <FilterGroup
         label="Type"
         options={filterOptions.types}
         selected={selectedTypes}
         onToggle={toggleType}
+      />
+      <FilterGroup
+        label="Platform"
+        options={filterOptions.platforms}
+        selected={selectedPlatforms}
+        onToggle={togglePlatform}
       />
     </div>
   );

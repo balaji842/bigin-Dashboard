@@ -111,11 +111,11 @@ function MiniStatCard({ name, amount, donors, active, onClick, onDonorsClick }) 
   );
 }
 
-function TypeFilterPills({ options, selected, onToggle }) {
+function TypeFilterPills({ label, options, selected, onToggle }) {
   if (!options || options.length === 0) return null;
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
-      <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">Type</p>
+    <div>
+      <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">{label}</p>
       <div className="flex flex-wrap gap-2">
         {options.map((opt) => {
           const active = selected == null || selected.includes(opt);
@@ -240,6 +240,8 @@ export default function CRMOverview() {
 
   const [typeOptions, setTypeOptions] = useState([]);
   const [selectedTypes, setSelectedTypes] = useState(null);
+  const [platformOptions, setPlatformOptions] = useState([]);
+  const [selectedPlatforms, setSelectedPlatforms] = useState(null);
 
   // Multi-select: null means nothing picked (FY side = "every year
   // combined", Donor Type side = "every type"). Clicking a card toggles
@@ -264,16 +266,21 @@ export default function CRMOverview() {
     });
   };
 
-  const hasActiveFilters = selectedFYs != null || selectedDonorTypes != null;
+  const hasActiveFilters = selectedFYs != null || selectedDonorTypes != null || selectedTypes != null || selectedPlatforms != null;
   const clearAllFilters = () => {
     setSelectedFYs(null);
     setSelectedDonorTypes(null);
+    setSelectedTypes(null);
+    setSelectedPlatforms(null);
   };
 
   useEffect(() => {
     fetch("/api/crm-analysis/filter-options")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((json) => setTypeOptions(json.types || []))
+      .then((json) => {
+        setTypeOptions(json.types || []);
+        setPlatformOptions(json.platforms || []);
+      })
       .catch(() => {});
   }, []);
 
@@ -287,12 +294,23 @@ export default function CRMOverview() {
     });
   };
 
+  const togglePlatform = (value) => {
+    setSelectedPlatforms((prev) => {
+      const base = prev == null ? platformOptions : prev;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      if (next.length === 0) return prev;
+      if (next.length === platformOptions.length) return null;
+      return next;
+    });
+  };
+
   useEffect(() => {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
     params.set("fy", selectedFYs && selectedFYs.length > 0 ? selectedFYs.join(",") : "ALL");
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
+    if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
     if (selectedDonorTypes && selectedDonorTypes.length > 0) params.set("donorTypes", selectedDonorTypes.join(","));
     fetch(`/api/crm-analysis/overview?${params.toString()}`)
       .then((r) => {
@@ -302,7 +320,7 @@ export default function CRMOverview() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [selectedFYs, selectedTypes, selectedDonorTypes]);
+  }, [selectedFYs, selectedTypes, selectedPlatforms, selectedDonorTypes]);
 
   const monthDonors = useMemo(() => {
     if (!data || !modalMonth) return [];
@@ -350,12 +368,17 @@ export default function CRMOverview() {
         summary={[
           selectedFYs != null ? `FY ${selectedFYs.join(", ")}` : null,
           selectedDonorTypes != null ? `Donor Type: ${selectedDonorTypes.join(", ")}` : null,
+          selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
+          selectedPlatforms != null ? `Platform: ${selectedPlatforms.join(", ")}` : null,
         ]
           .filter(Boolean)
           .join(" · ")}
       />
 
-      <TypeFilterPills options={typeOptions} selected={selectedTypes} onToggle={toggleType} />
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-3">
+        <TypeFilterPills label="Type" options={typeOptions} selected={selectedTypes} onToggle={toggleType} />
+        <TypeFilterPills label="Platform" options={platformOptions} selected={selectedPlatforms} onToggle={togglePlatform} />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <KpiCard

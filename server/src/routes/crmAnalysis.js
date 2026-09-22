@@ -97,6 +97,7 @@ router.get("/crm-analysis/overview", async (req, res) => {
   // specific fiscal years currently selected.
   const selectedFYs = !rawFy || rawFy === "ALL" ? null : parseListParam(rawFy);
   const selectedTypes = parseListParam(req.query.types);
+  const selectedPlatforms = parseListParam(req.query.platforms);
   const selectedDonorTypes = parseListParam(req.query.donorTypes);
 
   try {
@@ -105,6 +106,9 @@ router.get("/crm-analysis/overview", async (req, res) => {
     let filtereddonors = donors;
     if (selectedTypes && selectedTypes.length > 0) {
       filtereddonors = filtereddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
+    if (selectedPlatforms && selectedPlatforms.length > 0) {
+      filtereddonors = filtereddonors.filter((d) => selectedPlatforms.includes(pick(d, "Platform")));
     }
 
     const closeddonorsAll = filtereddonors.filter(isClosed);
@@ -214,6 +218,7 @@ router.get("/crm-analysis/overview", async (req, res) => {
 router.get("/crm-analysis/closed-donors", async (req, res) => {
   const currentFY = req.query.fy || "2026-2027";
   const selectedTypes = parseListParam(req.query.types);
+  const selectedPlatforms = parseListParam(req.query.platforms);
 
   try {
     const donors = await getPipelines();
@@ -222,6 +227,10 @@ router.get("/crm-analysis/closed-donors", async (req, res) => {
     if (selectedTypes && selectedTypes.length > 0) {
       closeddonors = closeddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
       standarddonors = standarddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
+    if (selectedPlatforms && selectedPlatforms.length > 0) {
+      closeddonors = closeddonors.filter((d) => selectedPlatforms.includes(pick(d, "Platform")));
+      standarddonors = standarddonors.filter((d) => selectedPlatforms.includes(pick(d, "Platform")));
     }
 
     const closedThisFY = closeddonors.filter(
@@ -296,12 +305,16 @@ router.get("/crm-analysis/closed-donors", async (req, res) => {
 router.get("/crm-analysis/standard-pipeline", async (req, res) => {
   const currentFY = req.query.fy || "2026-2027";
   const selectedTypes = parseListParam(req.query.types);
+  const selectedPlatforms = parseListParam(req.query.platforms);
 
   try {
     const donors = await getPipelines();
     let standarddonors = donors.filter(isStandardPipeline);
     if (selectedTypes && selectedTypes.length > 0) {
       standarddonors = standarddonors.filter((d) => selectedTypes.includes(pick(d, "Type")));
+    }
+    if (selectedPlatforms && selectedPlatforms.length > 0) {
+      standarddonors = standarddonors.filter((d) => selectedPlatforms.includes(pick(d, "Platform")));
     }
     // Same "approved by Rajesh, not Lost/On Hold" rule as the Overview
     // page's Pipeline card (see isApprovedOpenPipeline) — applied here so
