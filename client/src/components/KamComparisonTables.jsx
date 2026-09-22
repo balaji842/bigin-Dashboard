@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import MultiSelectDropdown from "./MultiSelectDropdown.jsx";
 
 // Values here are entered/displayed directly in Crore units (matching
 // how Target is typed in), not full rupees — so this just divides and
@@ -142,7 +143,7 @@ function TargetRow({ typeLayout, targets, onChange, onBlur, readOnly }) {
 // data rows. `mode` picks which extra rows appear below "Total conversion":
 // "past" -> an "Apr-<month>" same-period row; "current" -> "Pipeline" +
 // "Balance to be achieved".
-function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChange, onTargetBlur, allPlatforms }) {
+function YearTable({ kamLabel, readOnly, fy, mode, yearData, monthLabel, targets, onTargetChange, onTargetBlur, allPlatforms }) {
   const types = typeNamesOf([yearData?.conversion, yearData?.ytd, yearData?.pipeline]);
   // Every Type shows the SAME Platform columns (the full set found across
   // all donors, not just this KAM's), so the table shape is predictable
@@ -150,8 +151,6 @@ function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChang
   // School Engagement donors still shows P1/P2/P3, just zero-filled,
   // rather than silently dropping those columns.
   const typeLayout = types.map((type) => ({ type, platforms: allPlatforms }));
-  const isAllKam = kam === "ALL";
-  const kamLabel = isAllKam ? "All KAM" : kam;
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -178,7 +177,7 @@ function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChang
     targets={targets}
     onChange={onTargetChange}
     onBlur={onTargetBlur}
-    readOnly={isAllKam}
+    readOnly={readOnly}
   />
 )}
             <tr>
@@ -231,13 +230,16 @@ function YearTable({ kam, fy, mode, yearData, monthLabel, targets, onTargetChang
 
 export default function KamComparisonTables({ fy1, fy2 }) {
   const [kams, setKams] = useState([]);
-  const [selectedKam, setSelectedKam] = useState(null);
+  // null = "All KAM" (every KAM aggregated — the default); an array
+  // (including an empty one, reachable via "Clear all") is the
+  // explicit subset currently selected.
+  const [selectedKams, setSelectedKams] = useState(null);
   const [allPlatforms, setAllPlatforms] = useState([]);
 
   const [spocs, setSpocs] = useState([]);
-  const [selectedSpoc, setSelectedSpoc] = useState("");
+  const [selectedSpocs, setSelectedSpocs] = useState(null);
   const [donorTypes, setDonorTypes] = useState([]);
-  const [selectedDonorType, setSelectedDonorType] = useState("");
+  const [selectedDonorTypes, setSelectedDonorTypes] = useState(null);
 
   const [comparisonData, setComparisonData] = useState(null);
   const [loadingComparison, setLoadingComparison] = useState(false);
@@ -257,26 +259,54 @@ export default function KamComparisonTables({ fy1, fy2 }) {
         setAllPlatforms(json.platforms || []);
         setSpocs(json.spocs || []);
         setDonorTypes(json.donorTypes || []);
-        if ((json.kams || []).length > 0) setSelectedKam((prev) => prev ?? "ALL");
       })
       .catch(() => {
         /* KAM dropdown just stays empty — non-fatal */
       });
   }, []);
 
+  // Standard multi-select toggle: null (nothing chosen yet =
+  // "everything") starts from every option checked, unchecking one
+  // moves to an explicit list, and unchecking the very last one snaps
+  // back to null instead of leaving an empty "show nothing" state.
+  const toggleIn = (setter, allOptions) => (value) => {
+    setter((current) => {
+      const base = current == null ? allOptions : current;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      if (next.length === 0) return current;
+      if (next.length === allOptions.length) return null;
+      return next;
+    });
+  };
+  const toggleKam = toggleIn(setSelectedKams, kams);
+  const toggleSpoc = toggleIn(setSelectedSpocs, spocs);
+  const toggleDonorType = toggleIn(setSelectedDonorTypes, donorTypes);
+
+  // Builds the `kam`/`spoc`/`donorType` query values for both the
+  // comparison and targets fetches below. "__NONE__" is a sentinel that
+  // never matches a real value — used for an explicit empty selection
+  // (from "Clear all") so it correctly filters everything out instead
+  // of an empty query string being read as "no filter" server-side.
+  const kamParam = selectedKams == null ? "ALL" : selectedKams.length === 0 ? "__NONE__" : selectedKams.join(",");
+  const spocParam = selectedSpocs == null ? null : selectedSpocs.length === 0 ? "__NONE__" : selectedSpocs.join(",");
+  const donorTypeParam =
+    selectedDonorTypes == null ? null : selectedDonorTypes.length === 0 ? "__NONE__" : selectedDonorTypes.join(",");
+
+  const kamLabel =
+    selectedKams == null ? "All KAM" : selectedKams.length === 0 ? "No KAM selected" : selectedKams.join(", ");
+
   const reload = () => {
-    if (!selectedKam) return;
     setLoadingComparison(true);
     setError(null);
-    const params = new URLSearchParams({ kam: selectedKam, fy1, fy2 });
-    if (selectedSpoc) params.set("spoc", selectedSpoc);
-    if (selectedDonorType) params.set("donorType", selectedDonorType);
+    const params = new URLSearchParams({ kam: kamParam, fy1, fy2 });
+    if (spocParam != null) params.set("spoc", spocParam);
+    if (donorTypeParam != null) params.set("donorType", donorTypeParam);
     Promise.all([
       fetch(`/api/crm-analysis/kam-comparison?${params.toString()}`).then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       }),
-      fetch(`/api/crm-analysis/targets?${new URLSearchParams({ kam: selectedKam, fy1, fy2 }).toString()}`).then((r) => {
+      fetch(`/api/crm-analysis/targets?${new URLSearchParams({ kam: kamParam, fy1, fy2 }).toString()}`).then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       }),
@@ -289,7 +319,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
       .finally(() => setLoadingComparison(false));
   };
 
-  useEffect(reload, [selectedKam, selectedSpoc, selectedDonorType, fy1, fy2]);
+  useEffect(reload, [kamParam, spocParam, donorTypeParam, fy1, fy2]);
 
   const handleTargetChange = (yearKey, fyValue, type, value) => {
     setTargets((prev) => ({ ...prev, [yearKey]: { ...prev[yearKey], [type]: value } }));
@@ -297,11 +327,14 @@ export default function KamComparisonTables({ fy1, fy2 }) {
 
   const handleTargetBlur = (yearKey, fyValue, type) => {
     const value = targets[yearKey][type];
-    if (value == null || !selectedKam) return;
+    // Only ever called from an editable Target row, which only renders
+    // when exactly one specific KAM is in view (see comparisonData.editable) —
+    // so `selectedKams` is guaranteed to be a single-item array here.
+    if (value == null || !selectedKams || selectedKams.length !== 1) return;
     fetch("/api/crm-analysis/targets", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kam: selectedKam, fy: fyValue, type, value }),
+      body: JSON.stringify({ kam: selectedKams[0], fy: fyValue, type, value }),
     }).catch(() => {
       /* Best-effort save — a failed save just means it reverts on next reload */
     });
@@ -315,44 +348,38 @@ export default function KamComparisonTables({ fy1, fy2 }) {
         <div className="flex flex-wrap gap-4">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">KAM</p>
-            <select
-              value={selectedKam || ""}
-              onChange={(e) => setSelectedKam(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-2 max-w-xs w-full"
-            >
-              <option value="ALL">All KAM</option>
-              {kams.map((k) => (
-                <option key={k} value={k}>{k}</option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="KAM"
+              options={kams}
+              selected={selectedKams}
+              onToggle={toggleKam}
+              onSelectAll={() => setSelectedKams(null)}
+              onClearAll={() => setSelectedKams([])}
+            />
           </div>
 
           <div>
             <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">SPOC</p>
-            <select
-              value={selectedSpoc}
-              onChange={(e) => setSelectedSpoc(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-2 max-w-xs w-full"
-            >
-              <option value="">All SPOCs</option>
-              {spocs.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="SPOC"
+              options={spocs}
+              selected={selectedSpocs}
+              onToggle={toggleSpoc}
+              onSelectAll={() => setSelectedSpocs(null)}
+              onClearAll={() => setSelectedSpocs([])}
+            />
           </div>
 
           <div>
             <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">Donor Type</p>
-            <select
-              value={selectedDonorType}
-              onChange={(e) => setSelectedDonorType(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-2 max-w-xs w-full"
-            >
-              <option value="">All Donor Types</option>
-              {donorTypes.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="Donor Type"
+              options={donorTypes}
+              selected={selectedDonorTypes}
+              onToggle={toggleDonorType}
+              onSelectAll={() => setSelectedDonorTypes(null)}
+              onClearAll={() => setSelectedDonorTypes([])}
+            />
           </div>
         </div>
       </div>
@@ -372,7 +399,8 @@ export default function KamComparisonTables({ fy1, fy2 }) {
       {comparisonData && (
         <>
           <YearTable
-            kam={selectedKam}
+            kamLabel={kamLabel}
+            readOnly={!comparisonData.editable}
             fy={fy2}
             mode="current"
             yearData={comparisonData.fy2}
@@ -382,7 +410,8 @@ export default function KamComparisonTables({ fy1, fy2 }) {
             onTargetBlur={(type) => handleTargetBlur("fy2", fy2, type)}
           />
           <YearTable
-            kam={selectedKam}
+            kamLabel={kamLabel}
+            readOnly={!comparisonData.editable}
             fy={fy1}
             mode="past"
             monthLabel={comparisonData.currentMonthLabel}

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { moneyCr, fullMoney } from "../lib/format.js";
+import { moneyCr, fullMoney, moneyForDonorType } from "../lib/format.js";
 import ExportButton from "./ExportButton.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
+import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import { filterRows } from "../lib/donorRows.js";
 
@@ -198,11 +200,11 @@ function toCsvValue(v) {
 }
 
 function downloadPipelineDonorHistoryCsv(rows) {
-  const header = ["S.No", "Name", "Amount", "Expected Month", "Type", "Donor Type", "KAM", "SPOC"];
+  const header = ["S.No", "Name", "Amount", "Expected Month", "Type", "Donor Type", "Platform", "KAM", "SPOC"];
   const lines = [header.join(",")];
   rows.forEach((r, i) => {
     lines.push(
-      [i + 1, r.account, r.amount, r.expectedMonth || "", r.type, r.donorType, r.kam, r.spoc]
+      [i + 1, r.account, r.amount, r.expectedMonth || "", r.type, r.donorType, r.platform, r.kam, r.spoc]
         .map(toCsvValue)
         .join(",")
     );
@@ -223,26 +225,63 @@ const PAGE_SIZE = 10;
 // month (a picklist field), not an actual closing date.
 function DonorHistoryTable({ rows, subtitle }) {
   const [search, setSearch] = useState("");
-  const [showFilters, setShowFilters] = useState(false);
-  const [colFilters, setColFilters] = useState({ month: "", type: "", donorType: "", kam: "", spoc: "" });
+  // Multi-select per column — null means "everything" for that column.
+  const [filters, setFilters] = useState({ expectedMonth: null, type: null, donorType: null, kam: null, spoc: null, platform: null });
+  const [sortColumn, setSortColumn] = useState(null); // "account" | "amount" | null
+  const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
   const [page, setPage] = useState(0);
+
+  // Options are always computed from the full `rows` prop (not the
+  // filtered set), so a column's checkbox list never shrinks as other
+  // filters get applied.
+  const monthOptions = useMemo(() => optionsFor(rows, "expectedMonth"), [rows]);
+  const typeOptions = useMemo(() => optionsFor(rows, "type"), [rows]);
+  const donorTypeOptions = useMemo(() => optionsFor(rows, "donorType"), [rows]);
+  const kamOptions = useMemo(() => optionsFor(rows, "kam"), [rows]);
+  const spocOptions = useMemo(() => optionsFor(rows, "spoc"), [rows]);
+  const platformOptions = useMemo(() => optionsFor(rows, "platform"), [rows]);
+  const optionsByField = {
+    expectedMonth: monthOptions,
+    type: typeOptions,
+    donorType: donorTypeOptions,
+    kam: kamOptions,
+    spoc: spocOptions,
+    platform: platformOptions,
+  };
+  const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPage, optionsByField);
+
+  const setSortFor = (column) => (dir) => {
+    setSortColumn(dir == null ? null : column);
+    setSortDir(dir);
+    setPage(0);
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    let out = rows.filter((r) => {
       if (q) {
         const hay = `${r.account} ${r.kam} ${r.spoc}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
-      const month = r.expectedMonth || "";
-      if (colFilters.month && !month.toLowerCase().includes(colFilters.month.toLowerCase())) return false;
-      if (colFilters.type && !(r.type || "").toLowerCase().includes(colFilters.type.toLowerCase())) return false;
-      if (colFilters.donorType && !(r.donorType || "").toLowerCase().includes(colFilters.donorType.toLowerCase())) return false;
-      if (colFilters.kam && !(r.kam || "").toLowerCase().includes(colFilters.kam.toLowerCase())) return false;
-      if (colFilters.spoc && !(r.spoc || "").toLowerCase().includes(colFilters.spoc.toLowerCase())) return false;
-      return true;
+      return (
+        matchesFilter(r.expectedMonth, filters.expectedMonth) &&
+        matchesFilter(r.type, filters.type) &&
+        matchesFilter(r.donorType, filters.donorType) &&
+        matchesFilter(r.kam, filters.kam) &&
+        matchesFilter(r.spoc, filters.spoc) &&
+        matchesFilter(r.platform, filters.platform)
+      );
     });
-  }, [rows, search, colFilters]);
+    if (sortColumn && sortDir) {
+      out = [...out].sort((a, b) => {
+        if (sortColumn === "amount") {
+          return sortDir === "asc" ? (a.amount || 0) - (b.amount || 0) : (b.amount || 0) - (a.amount || 0);
+        }
+        return sortDir === "asc" ? a.account.localeCompare(b.account) : b.account.localeCompare(a.account);
+      });
+    }
+    return out;
+  }, [rows, search, filters, sortColumn, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -251,10 +290,6 @@ function DonorHistoryTable({ rows, subtitle }) {
 
   const updateSearch = (v) => {
     setSearch(v);
-    setPage(0);
-  };
-  const updateColFilter = (key, v) => {
-    setColFilters((f) => ({ ...f, [key]: v }));
     setPage(0);
   };
 
@@ -277,79 +312,83 @@ function DonorHistoryTable({ rows, subtitle }) {
             placeholder="Search by name, KAM or SPOC…"
             className="text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-pink-400 w-56"
           />
-          <button
-            onClick={() => setShowFilters((s) => !s)}
-            className={`text-sm font-semibold px-3 py-2 rounded-lg border transition-colors ${
-              showFilters ? "bg-navy-900 text-white border-navy-900" : "bg-white text-navy-700 border-slate-200 hover:border-slate-300"
-            }`}
-          >
-            Filter
-          </button>
           <ExportButton onClick={() => downloadPipelineDonorHistoryCsv(filtered)} disabled={filtered.length === 0} />
         </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-100">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[840px]">
+          <table className="w-full text-sm min-w-[920px]">
             <thead>
-              <tr className="bg-navy-900 text-white text-left">
+              <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
                 <th className="px-4 py-3 font-semibold">S.No</th>
-                <th className="px-4 py-3 font-semibold">Name</th>
-                <th className="px-4 py-3 font-semibold text-right">Amount</th>
-                <th className="px-4 py-3 font-semibold">Expected Month</th>
-                <th className="px-4 py-3 font-semibold">Type</th>
-                <th className="px-4 py-3 font-semibold">Donor Type</th>
-                <th className="px-4 py-3 font-semibold">KAM</th>
-                <th className="px-4 py-3 font-semibold">SPOC</th>
+                <th className="px-4 py-3 font-semibold">
+                  <ColumnSortMenu label="Name" sortDir={sortColumn === "account" ? sortDir : null} onSort={setSortFor("account")} />
+                </th>
+                <th className="px-4 py-3 font-semibold text-right">
+                  <ColumnSortMenu label="Amount" sortDir={sortColumn === "amount" ? sortDir : null} onSort={setSortFor("amount")} />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="Expected Month"
+                    options={monthOptions}
+                    selected={filters.expectedMonth}
+                    onToggle={toggleOption("expectedMonth")}
+                    onSelectAll={selectAll("expectedMonth")}
+                    onClearAll={clearAll("expectedMonth")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="Type"
+                    options={typeOptions}
+                    selected={filters.type}
+                    onToggle={toggleOption("type")}
+                    onSelectAll={selectAll("type")}
+                    onClearAll={clearAll("type")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="Donor Type"
+                    options={donorTypeOptions}
+                    selected={filters.donorType}
+                    onToggle={toggleOption("donorType")}
+                    onSelectAll={selectAll("donorType")}
+                    onClearAll={clearAll("donorType")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="Platform"
+                    options={platformOptions}
+                    selected={filters.platform}
+                    onToggle={toggleOption("platform")}
+                    onSelectAll={selectAll("platform")}
+                    onClearAll={clearAll("platform")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="KAM"
+                    options={kamOptions}
+                    selected={filters.kam}
+                    onToggle={toggleOption("kam")}
+                    onSelectAll={selectAll("kam")}
+                    onClearAll={clearAll("kam")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
+                    label="SPOC"
+                    options={spocOptions}
+                    selected={filters.spoc}
+                    onToggle={toggleOption("spoc")}
+                    onSelectAll={selectAll("spoc")}
+                    onClearAll={clearAll("spoc")}
+                  />
+                </th>
               </tr>
-              {showFilters && (
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="px-4 py-2" />
-                  <th className="px-4 py-2" />
-                  <th className="px-4 py-2" />
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.month}
-                      onChange={(e) => updateColFilter("month", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.type}
-                      onChange={(e) => updateColFilter("type", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.donorType}
-                      onChange={(e) => updateColFilter("donorType", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.kam}
-                      onChange={(e) => updateColFilter("kam", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                  <th className="px-4 py-2">
-                    <input
-                      value={colFilters.spoc}
-                      onChange={(e) => updateColFilter("spoc", e.target.value)}
-                      placeholder="Filter…"
-                      className="w-full text-xs px-2 py-1 rounded border border-slate-200"
-                    />
-                  </th>
-                </tr>
-              )}
             </thead>
             <tbody>
               {pageRows.map((r, i) => (
@@ -357,7 +396,7 @@ function DonorHistoryTable({ rows, subtitle }) {
                   <td className="px-4 py-3 text-slate-500">{String(start + i + 1).padStart(2, "0")}</td>
                   <td className="px-4 py-3 text-navy-900 font-medium">{r.account}</td>
                   <td className="px-4 py-3 text-right font-bold text-navy-900 whitespace-nowrap" title={fullMoney(r.amount)}>
-                    {moneyCr(r.amount)}
+                    {moneyForDonorType(r.amount, r.donorType)}
                   </td>
                   <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.expectedMonth || "—"}</td>
                   <td className="px-4 py-3">
@@ -366,13 +405,14 @@ function DonorHistoryTable({ rows, subtitle }) {
                   <td className="px-4 py-3">
                     <Pill value={r.donorType} theme={DONOR_TYPE_THEME} />
                   </td>
+                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.platform}</td>
                   <td className="px-4 py-3 text-slate-600">{r.kam}</td>
                   <td className="px-4 py-3 text-slate-600">{r.spoc}</td>
                 </tr>
               ))}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={9} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No records match your search.
                   </td>
                 </tr>

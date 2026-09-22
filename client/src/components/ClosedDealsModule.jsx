@@ -8,10 +8,11 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { moneyCr, fullMoney } from "../lib/format.js";
+import { moneyCr, fullMoney, moneyForDonorType } from "../lib/format.js";
 import ExportButton from "./ExportButton.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import { filterRows } from "../lib/donorRows.js";
 
@@ -217,11 +218,11 @@ function toCsvValue(v) {
 }
 
 function downloadDonorHistoryCsv(rows) {
-  const header = ["S.No", "Name", "Amount", "Month", "Type", "Donor Type", "KAM", "SPOC"];
+  const header = ["S.No", "Name", "Amount", "Month", "Type", "Donor Type", "Platform", "KAM", "SPOC"];
   const lines = [header.join(",")];
   rows.forEach((r, i) => {
     lines.push(
-      [i + 1, r.account, r.amount, r.monthLabel || "", r.type, r.donorType, r.kam, r.spoc]
+      [i + 1, r.account, r.amount, r.monthLabel || "", r.type, r.donorType, r.platform, r.kam, r.spoc]
         .map(toCsvValue)
         .join(",")
     );
@@ -243,7 +244,9 @@ const PAGE_SIZE = 10;
 function DonorHistoryTable({ rows, subtitle }) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
-  const [filters, setFilters] = useState({ month: null, type: null, donorType: null, kam: null, spoc: null });
+  const [filters, setFilters] = useState({ month: null, type: null, donorType: null, kam: null, spoc: null, platform: null });
+  const [sortColumn, setSortColumn] = useState(null); // "account" | "amount" | null
+  const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
   const [page, setPage] = useState(0);
 
   // Options are always computed from the full `rows` prop (not the
@@ -255,12 +258,26 @@ function DonorHistoryTable({ rows, subtitle }) {
   const donorTypeOptions = useMemo(() => optionsFor(rows, "donorType"), [rows]);
   const kamOptions = useMemo(() => optionsFor(rows, "kam"), [rows]);
   const spocOptions = useMemo(() => optionsFor(rows, "spoc"), [rows]);
-  const optionsByField = { month: monthOptions, type: typeOptions, donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions };
+  const platformOptions = useMemo(() => optionsFor(rows, "platform"), [rows]);
+  const optionsByField = {
+    month: monthOptions,
+    type: typeOptions,
+    donorType: donorTypeOptions,
+    kam: kamOptions,
+    spoc: spocOptions,
+    platform: platformOptions,
+  };
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPage, optionsByField);
+
+  const setSortFor = (column) => (dir) => {
+    setSortColumn(dir == null ? null : column);
+    setSortDir(dir);
+    setPage(0);
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    let out = rows.filter((r) => {
       if (q) {
         const hay = `${r.account} ${r.kam} ${r.spoc}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -270,10 +287,20 @@ function DonorHistoryTable({ rows, subtitle }) {
         matchesFilter(r.type, filters.type) &&
         matchesFilter(r.donorType, filters.donorType) &&
         matchesFilter(r.kam, filters.kam) &&
-        matchesFilter(r.spoc, filters.spoc)
+        matchesFilter(r.spoc, filters.spoc) &&
+        matchesFilter(r.platform, filters.platform)
       );
     });
-  }, [rows, search, filters]);
+    if (sortColumn && sortDir) {
+      out = [...out].sort((a, b) => {
+        if (sortColumn === "amount") {
+          return sortDir === "asc" ? (a.amount || 0) - (b.amount || 0) : (b.amount || 0) - (a.amount || 0);
+        }
+        return sortDir === "asc" ? a.account.localeCompare(b.account) : b.account.localeCompare(a.account);
+      });
+    }
+    return out;
+  }, [rows, search, filters, sortColumn, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -310,12 +337,16 @@ function DonorHistoryTable({ rows, subtitle }) {
 
       <div className="overflow-hidden rounded-xl border border-slate-100">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[820px]">
+          <table className="w-full text-sm min-w-[900px]">
             <thead>
               <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
                 <th className="px-4 py-3 font-semibold">S.No</th>
-                <th className="px-4 py-3 font-semibold">Name</th>
-                <th className="px-4 py-3 font-semibold text-right">Amount</th>
+                <th className="px-4 py-3 font-semibold">
+                  <ColumnSortMenu label="Name" sortDir={sortColumn === "account" ? sortDir : null} onSort={setSortFor("account")} />
+                </th>
+                <th className="px-4 py-3 font-semibold text-right">
+                  <ColumnSortMenu label="Amount" sortDir={sortColumn === "amount" ? sortDir : null} onSort={setSortFor("amount")} />
+                </th>
                 <th className="px-4 py-3 font-semibold">
                   <HeaderFilterMenu
                     label="Month"
@@ -348,6 +379,16 @@ function DonorHistoryTable({ rows, subtitle }) {
                 </th>
                 <th className="px-4 py-3 font-semibold">
                   <HeaderFilterMenu
+                    label="Platform"
+                    options={platformOptions}
+                    selected={filters.platform}
+                    onToggle={toggleOption("platform")}
+                    onSelectAll={selectAll("platform")}
+                    onClearAll={clearAll("platform")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <HeaderFilterMenu
                     label="KAM"
                     options={kamOptions}
                     selected={filters.kam}
@@ -374,7 +415,7 @@ function DonorHistoryTable({ rows, subtitle }) {
                   <td className="px-4 py-3 text-slate-500">{String(start + i + 1).padStart(2, "0")}</td>
                   <td className="px-4 py-3 text-navy-900 font-medium">{r.account}</td>
                   <td className="px-4 py-3 text-right font-bold text-navy-900 whitespace-nowrap" title={fullMoney(r.amount)}>
-                    {moneyCr(r.amount)}
+                    {moneyForDonorType(r.amount, r.donorType)}
                   </td>
                   <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.monthLabel || "—"}</td>
                   <td className="px-4 py-3">
@@ -383,13 +424,14 @@ function DonorHistoryTable({ rows, subtitle }) {
                   <td className="px-4 py-3">
                     <Pill value={r.donorType} theme={DONOR_TYPE_THEME} />
                   </td>
+                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.platform}</td>
                   <td className="px-4 py-3 text-slate-600">{r.kam}</td>
                   <td className="px-4 py-3 text-slate-600">{r.spoc}</td>
                 </tr>
               ))}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={9} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No records match your search.
                   </td>
                 </tr>

@@ -20,7 +20,7 @@ import {
   STANDARD_TYPES,
   isApprovedOpenPipeline,
 } from "../lib/dealHelpers.js";
-import { getTargetsFor, getSummedTargetsFor, setTarget } from "../lib/targetsStore.js";
+import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
 
 // Parses a comma-separated query param into a trimmed array, or null if
@@ -523,8 +523,7 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
 //
 // Donor-level drilldown for one month's Difference cell in the By Month
 // table. Buckets every donor active around that month into 4 groups:
-//   - matching: gave in this month in both fy1 and fy2 (or gave again
-//               anywhere else in fy2 — see buildMonthDonorBreakdown)
+//   - matching: gave in this month in both fy1 and fy2
 //   - missing:  gave in this month in fy1, gave nothing anywhere in fy2 (to date)
 //   - new:      gave in this month in fy2, and either gave in fy1 in a
 //               different month (timing shift) or has no prior history at all
@@ -686,12 +685,15 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
 });
 
 // GET /api/crm-analysis/kam-comparison?kam=NGOs%20%2F%20NPOs&fy1=2025-2026&fy2=2026-2027
-// kam can also be "ALL" — aggregates every KAM together instead of
-// filtering to one, for the "All KAM" option on Engagement Status.
+// kam can also be "ALL" (aggregates every KAM), or a comma-separated
+// list of several specific KAMs (aggregates just those) — the same
+// "All KAM" style multi-select used elsewhere on the dashboard. spoc
+// and donorType now accept comma-separated lists too (any-of match),
+// not just one value each.
 //
-// Type x Platform breakdown for one KAM, for both fiscal years — powers
-// the "Comparison of [KAM] for the year [FY]" tables on Engagement
-// Status. Returns 3 totals per year:
+// Type x Platform breakdown for the selected KAM(s), for both fiscal
+// years — powers the "Comparison of [KAM] for the year [FY]" tables on
+// Engagement Status. Returns 3 totals per year:
 //   - conversion: full-year closed donors (used as "Total conversion")
 //   - ytd:        closed donors from April up to the current fiscal
 //                  month (used as fy1's "Apr-<month>" comparison row)
@@ -700,22 +702,29 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
 //                  Target - conversion - pipeline, since Target is a
 //                  separately-editable value, not CRM data)
 router.get("/crm-analysis/kam-comparison", async (req, res) => {
-  const kam = req.query.kam;
+  const kamParam = req.query.kam;
   const fy1 = req.query.fy1 || "2025-2026";
   const fy2 = req.query.fy2 || "2026-2027";
-  const spoc = req.query.spoc || null;
-  const donorType = req.query.donorType || null;
+  const spocList = parseListParam(req.query.spoc);
+  const donorTypeList = parseListParam(req.query.donorType);
 
-  if (!kam) {
+  if (!kamParam) {
     return res.status(400).json({ error: "kam query param is required" });
   }
+
+  const isAllKam = kamParam === "ALL";
+  const kamList = isAllKam ? null : parseListParam(kamParam);
+  // Editable Target only makes sense when exactly one specific KAM is
+  // in view — "ALL" or several selected together get a read-only
+  // summed Target instead (see the /targets route below).
+  const editable = !isAllKam && kamList && kamList.length === 1;
 
   try {
     const donors = await getPipelines();
     const matchesFilters = (d) =>
-      (kam === "ALL" || pick(d, "Pipeline_KAM") === kam) &&
-      (!spoc || pick(d, "Spoc") === spoc) &&
-      (!donorType || pick(d, "Type_of_donor") === donorType);
+      (isAllKam || (kamList && kamList.includes(pick(d, "Pipeline_KAM")))) &&
+      (!spocList || spocList.includes(pick(d, "Spoc"))) &&
+      (!donorTypeList || donorTypeList.includes(pick(d, "Type_of_donor")));
 
     const closeddonors = donors.filter(isClosed).filter(matchesFilters);
     const standarddonors = donors.filter(isStandardPipeline).filter(matchesFilters);
@@ -744,7 +753,8 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
     }
 
     res.json({
-      kam,
+      kam: kamParam,
+      editable,
       currentMonthLabel,
       fy1: buildYear(fy1),
       fy2: buildYear(fy2),
@@ -756,34 +766,95 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
 });
 
 // GET /api/crm-analysis/targets?kam=...&fy1=...&fy2=...
-// kam="ALL" returns the sum of every real KAM's target per type,
-// read-only on the client (there's no single target to edit when
-// looking at every KAM combined).
+// kam="ALL", or a comma-separated list of several specific KAMs, both
+// return the SUM of those KAMs' targets per type, read-only on the
+// client (there's no single target to edit once more than one KAM is
+// in view). A single specific KAM returns its own editable targets.
 router.get("/crm-analysis/targets", (req, res) => {
-  const kam = req.query.kam;
+  const kamParam = req.query.kam;
   const fy1 = req.query.fy1 || "2025-2026";
   const fy2 = req.query.fy2 || "2026-2027";
 
-  if (!kam) {
+  if (!kamParam) {
     return res.status(400).json({ error: "kam query param is required" });
   }
 
   try {
-    if (kam === "ALL") {
+    const isAllKam = kamParam === "ALL";
+    const kamList = isAllKam ? null : parseListParam(kamParam);
+
+    if (isAllKam || (kamList && kamList.length > 1)) {
       res.json({
-        kam,
-        fy1: { fy: fy1, targets: getSummedTargetsFor(fy1, STANDARD_TYPES) },
-        fy2: { fy: fy2, targets: getSummedTargetsFor(fy2, STANDARD_TYPES) },
+        kam: kamParam,
+        editable: false,
+        fy1: { fy: fy1, targets: getSummedTargetsFor(fy1, STANDARD_TYPES, kamList) },
+        fy2: { fy: fy2, targets: getSummedTargetsFor(fy2, STANDARD_TYPES, kamList) },
       });
       return;
     }
+
+    const kam = kamList[0];
     res.json({
       kam,
+      editable: true,
       fy1: { fy: fy1, targets: getTargetsFor(fy1, kam, STANDARD_TYPES) },
       fy2: { fy: fy2, targets: getTargetsFor(fy2, kam, STANDARD_TYPES) },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/crm-analysis/kam-targets-overview?fy=2026-2027&type=Cash
+//
+// One row per KAM — their Total Conversion (closed deals) amount for
+// that Type + fiscal year, alongside their Target for the same Type +
+// year — powering the KAM-wise Target chart on Engagement Status. A
+// KAM shows up here if it has EITHER an achieved amount OR a target
+// set (a KAM with a target but zero conversions yet still needs to
+// appear, at 0 achieved).
+router.get("/crm-analysis/kam-targets-overview", async (req, res) => {
+  const fy = req.query.fy || "2026-2027";
+  const type = req.query.type;
+
+  if (!type) {
+    return res.status(400).json({ error: "type query param is required" });
+  }
+
+  try {
+    const donors = await getPipelines();
+    const closedFY = donors
+      .filter(isClosed)
+      .filter((d) => pick(d, "Fiscal_year", "") === fy && pick(d, "Type") === type);
+
+    const achievedByKam = groupSummary(closedFY, "Pipeline_KAM"); // [{ name, amount, donors }]
+    const targetsByKam = getAllTargetsForType(fy, type); // { [kam]: value }
+
+    const kamNames = new Set([
+      ...achievedByKam.map((r) => r.name).filter((n) => n !== "Unspecified"),
+      ...Object.keys(targetsByKam),
+    ]);
+
+    const rows = [...kamNames]
+      .map((kam) => {
+        const achievedRow = achievedByKam.find((r) => r.name === kam);
+        return {
+          kam,
+          achieved: achievedRow ? achievedRow.amount : 0,
+          donors: achievedRow ? achievedRow.donors : 0,
+          target: targetsByKam[kam] != null ? targetsByKam[kam] * 10000000 : null, // targets are stored in Crore, everything else here is in rupees
+        };
+      })
+      .sort((a, b) => (b.target ?? -Infinity) - (a.target ?? -Infinity) || b.achieved - a.achieved);
+
+    res.json({
+      fy,
+      type,
+      rows,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 

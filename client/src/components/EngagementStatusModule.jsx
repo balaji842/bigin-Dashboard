@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { moneyCr } from "../lib/format.js";
+import { moneyCr, moneyForDonorType } from "../lib/format.js";
 import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
 import KamComparisonTables from "./KamComparisonTables.jsx";
+import KamTargetChart from "./KamTargetChart.jsx";
 
 function SearchIcon(props) {
   return (
@@ -191,8 +192,8 @@ function SummaryIconBadge({ iconBg, icon: Icon }) {
 // Amount column always shows the combined total for that FY+Type (same
 // as before the per-deal-split experiment) — a donor with several deals
 // in one FY still shows one summed value here.
-function AmountBreakdown({ amount }) {
-  return amount != null ? moneyCr(amount) : <span className="text-slate-300">—</span>;
+function AmountBreakdown({ amount, donorType }) {
+  return amount != null ? moneyForDonorType(amount, donorType) : <span className="text-slate-300">—</span>;
 }
 
 // Month column lists every distinct month that donor gave in for that
@@ -561,6 +562,7 @@ export default function EngagementStatusModule() {
       <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
 
       <KamComparisonTables fy1={fy1} fy2={fy2} />
+      <KamTargetChart fy={fy2} />
 
       {/* Summary cards — click to filter Engagement Status; the Total
           card resets that filter back to showing everyone. */}
@@ -768,7 +770,7 @@ export default function EngagementStatusModule() {
                       </td>
                     )}
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
-                      <AmountBreakdown amount={r.fy1Amount} />
+                      <AmountBreakdown amount={r.fy1Amount} donorType={r.donorType} />
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
                       {r.fy1Type || <span className="text-slate-300">—</span>}
@@ -777,7 +779,7 @@ export default function EngagementStatusModule() {
                       <MonthBreakdown month={r.fy1Month} deals={r.fy1Deals} />
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
-                      <AmountBreakdown amount={r.fy2Amount} />
+                      <AmountBreakdown amount={r.fy2Amount} donorType={r.donorType} />
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
                       {r.fy2Type || <span className="text-slate-300">—</span>}

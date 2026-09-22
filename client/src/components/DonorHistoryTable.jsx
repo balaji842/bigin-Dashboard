@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { moneyCr } from "../lib/format.js";
+import { moneyForDonorType } from "../lib/format.js";
 import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import ColumnSortMenu from "./ColumnSortMenu.jsx";
 
 function IconSearch(props) {
   return (
@@ -60,7 +61,9 @@ const PAGE_SIZE = 10;
 export default function DonorHistoryTable({ donors, onSelectDonor }) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
-  const [filters, setFilters] = useState({ donorType: null, kam: null, spoc: null });
+  const [filters, setFilters] = useState({ donorType: null, kam: null, spoc: null, platform: null });
+  const [sortColumn, setSortColumn] = useState(null); // "account" | "totalAmount" | null
+  const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
   const [page, setPage] = useState(0);
 
   // Options are always computed from the full `donors` prop (not the
@@ -69,19 +72,27 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
   const donorTypeOptions = useMemo(() => optionsFor(donors, "donorType"), [donors]);
   const kamOptions = useMemo(() => optionsFor(donors, "kam"), [donors]);
   const spocOptions = useMemo(() => optionsFor(donors, "spoc"), [donors]);
-  const optionsByField = { donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions };
+  const platformOptions = useMemo(() => optionsFor(donors, "platform"), [donors]);
+  const optionsByField = { donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions, platform: platformOptions };
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPage, optionsByField);
+
+  const setSortFor = (column) => (dir) => {
+    setSortColumn(dir == null ? null : column);
+    setSortDir(dir);
+    setPage(0);
+  };
 
   const filtered = useMemo(() => {
     let out = donors;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       // Search the donor's name AND the columns actually shown next to
-      // it (Donor Type, KAM, SPOC) — not just the name — so typing a
-      // Donor Type like "corporate" finds every donor with that badge,
-      // not only ones whose literal name happens to contain the word.
+      // it (Donor Type, KAM, SPOC, Platform) — not just the name — so
+      // typing a Donor Type like "corporate" finds every donor with
+      // that badge, not only ones whose literal name happens to
+      // contain the word.
       out = out.filter((d) => {
-        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""}`.toLowerCase();
+        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""} ${d.platform || ""}`.toLowerCase();
         return hay.includes(q);
       });
     }
@@ -89,10 +100,20 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
       (d) =>
         matchesFilter(d.donorType, filters.donorType) &&
         matchesFilter(d.kam, filters.kam) &&
-        matchesFilter(d.spoc, filters.spoc)
+        matchesFilter(d.spoc, filters.spoc) &&
+        matchesFilter(d.platform, filters.platform)
     );
+    if (sortColumn && sortDir) {
+      out = [...out].sort((a, b) => {
+        if (sortColumn === "totalAmount") {
+          return sortDir === "asc" ? (a.totalAmount || 0) - (b.totalAmount || 0) : (b.totalAmount || 0) - (a.totalAmount || 0);
+        }
+        // "account" — plain alphabetical.
+        return sortDir === "asc" ? a.account.localeCompare(b.account) : b.account.localeCompare(a.account);
+      });
+    }
     return out;
-  }, [donors, search, filters]);
+  }, [donors, search, filters, sortColumn, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -118,8 +139,8 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
   const handleExport = () => {
     downloadCsv(
       "donor-history.csv",
-      ["S.No", "Donor Name", "Total Amount", "Donor Type", "KAM", "SPOC"],
-      filtered.map((d, i) => [i + 1, d.account, d.totalAmount, d.donorType, d.kam, d.spoc])
+      ["S.No", "Donor Name", "Total Amount", "Donor Type", "Platform", "KAM", "SPOC"],
+      filtered.map((d, i) => [i + 1, d.account, d.totalAmount, d.donorType, d.platform, d.kam, d.spoc])
     );
   };
 
@@ -149,8 +170,16 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
           <thead>
             <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
               <th className="px-5 py-3 font-semibold">S.No</th>
-              <th className="px-5 py-3 font-semibold">Donor Name</th>
-              <th className="px-5 py-3 font-semibold text-right">Total Amount</th>
+              <th className="px-5 py-3 font-semibold">
+                <ColumnSortMenu label="Donor Name" sortDir={sortColumn === "account" ? sortDir : null} onSort={setSortFor("account")} />
+              </th>
+              <th className="px-5 py-3 font-semibold text-right">
+                <ColumnSortMenu
+                  label="Total Amount"
+                  sortDir={sortColumn === "totalAmount" ? sortDir : null}
+                  onSort={setSortFor("totalAmount")}
+                />
+              </th>
               <th className="px-5 py-3 font-semibold">
                 <HeaderFilterMenu
                   label="Donor Type"
@@ -159,6 +188,16 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
                   onToggle={toggleOption("donorType")}
                   onSelectAll={selectAll("donorType")}
                   onClearAll={clearAll("donorType")}
+                />
+              </th>
+              <th className="px-5 py-3 font-semibold">
+                <HeaderFilterMenu
+                  label="Platform"
+                  options={platformOptions}
+                  selected={filters.platform}
+                  onToggle={toggleOption("platform")}
+                  onSelectAll={selectAll("platform")}
+                  onClearAll={clearAll("platform")}
                 />
               </th>
               <th className="px-5 py-3 font-semibold">
@@ -197,18 +236,19 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
                   </button>
                 </td>
                 <td className="px-5 py-3 text-right font-bold text-navy-900 whitespace-nowrap">
-                  {moneyCr(d.totalAmount)}
+                  {moneyForDonorType(d.totalAmount, d.donorType)}
                 </td>
                 <td className="px-5 py-3">
                   <DonorTypeBadge donorType={d.donorType} />
                 </td>
+                <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.platform}</td>
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.kam}</td>
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.spoc}</td>
               </tr>
             ))}
             {pageRows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-5 py-8 text-center text-slate-400 text-sm">
+                <td colSpan={7} className="px-5 py-8 text-center text-slate-400 text-sm">
                   No donors match your search.
                 </td>
               </tr>

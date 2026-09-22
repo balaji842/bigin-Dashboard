@@ -157,6 +157,7 @@ function buildDonorHistory(table) {
         donorTypes: new Set(),
         kams: new Set(),
         spocs: new Set(),
+        platforms: new Set(),
         donors: [],
       };
     }
@@ -165,6 +166,7 @@ function buildDonorHistory(table) {
     if (row.donorType && row.donorType !== "Unspecified") entry.donorTypes.add(row.donorType);
     if (row.kam && row.kam !== "Unspecified") entry.kams.add(row.kam);
     if (row.spoc && row.spoc !== "Unspecified") entry.spocs.add(row.spoc);
+    if (row.platform && row.platform !== "Unspecified") entry.platforms.add(row.platform);
     entry.donors.push(row);
   }
 
@@ -175,6 +177,7 @@ function buildDonorHistory(table) {
       donorType: [...d.donorTypes].join(", ") || "—",
       kam: [...d.kams].join(", ") || "—",
       spoc: [...d.spocs].join(", ") || "—",
+      platform: [...d.platforms].join(", ") || "—",
       donors: d.donors,
     }))
     .sort((a, b) => b.totalAmount - a.totalAmount);

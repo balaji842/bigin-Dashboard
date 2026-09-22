@@ -318,19 +318,11 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
           kam: a2.kam,
           spoc: a2.spoc,
         });
-      } else {
-        newDonors.push({
-          account: info.account,
-          fy1Amount: null,
-          fy1Type: null,
-          fy1Month: null,
-          fy2Amount: a2.amount,
-          fy2Type: a2.type,
-          platform: a2.platform,
-          kam: a2.kam,
-          spoc: a2.spoc,
-        });
       }
+      // else: a genuinely first-time donor with no giving history at
+      // all (not even in fy1, not in any earlier year either) — the FY
+      // Comparison page's "New Donors" popup intentionally excludes
+      // these ("No prior giving" rows added no useful signal here).
     }
     // else: no activity in this month for either year — irrelevant to this view.
   }

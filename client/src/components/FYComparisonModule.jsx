@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import MonthDonorBreakdownModal from "./MonthDonorBreakdownModal.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
+import MultiSelectDropdown from "./MultiSelectDropdown.jsx";
 import { IconBuilding, IconCalendar, IconTag, IconUsers, IconLayers } from "./icons.jsx";
 import { moneyCr } from "../lib/format.js";
 
@@ -43,92 +44,6 @@ function FilterGroup({ label, options, selected, onToggle }) {
           );
         })}
       </div>
-    </div>
-  );
-}
-
-// Dropdown multi-select with checkboxes — used for KAM, SPOC, and
-// Platform, which can have many more options than Type. `selected: null`
-// means "everything" selected. Closes when clicking outside of it.
-function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    function handleClickOutside(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  if (!options || options.length === 0) return null;
-
-  const allSelected = selected == null;
-  const count = allSelected ? options.length : selected.length;
-  const summary = allSelected ? "All" : `${count} of ${options.length}`;
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-2 text-sm px-3.5 py-2 rounded-lg border transition-colors ${
-          open
-            ? "border-transparent bg-gradient-to-r from-indigo-600 to-purple-600 text-white"
-            : allSelected
-            ? "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-            : "border-indigo-200 bg-indigo-50 text-indigo-900"
-        }`}
-      >
-        <span className="font-semibold">{label}</span>
-        <span className={`text-xs ${open ? "text-white/70" : "text-slate-400"}`}>{summary}</span>
-        <svg
-          className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""} ${open ? "text-white/70" : "text-slate-400"}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute z-30 mt-2 w-64 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden">
-          <div className="flex items-center justify-between px-3.5 py-2 border-b border-slate-100 bg-slate-50">
-            <p className="text-xs font-semibold text-slate-500">{label}</p>
-            {!allSelected && (
-              <button
-                type="button"
-                onClick={onSelectAll}
-                className="text-xs font-semibold text-indigo-600 hover:underline"
-              >
-                Select all
-              </button>
-            )}
-          </div>
-          <div className="max-h-64 overflow-y-auto py-1">
-            {options.map((opt) => {
-              const checked = allSelected || selected.includes(opt);
-              return (
-                <label
-                  key={opt}
-                  className="flex items-center gap-2.5 px-3.5 py-2 text-sm text-navy-900 hover:bg-slate-50 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggle(opt)}
-                    className="w-4 h-4 rounded border-slate-300 accent-indigo-600 cursor-pointer"
-                  />
-                  <span className="truncate">{opt}</span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -471,10 +386,20 @@ export default function FYComparisonModule() {
   const togglePlatform = toggleIn(setSelectedPlatforms, filterOptions.platforms);
   const buildFilterParams = () => {
     const params = new URLSearchParams({ fy1, fy2 });
-    if (selectedTypes != null) params.set("types", selectedTypes.join(","));
-    if (selectedKams != null) params.set("kams", selectedKams.join(","));
-    if (selectedSpocs != null) params.set("spocs", selectedSpocs.join(","));
-    if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
+    // An empty array (from "Clear all") means "match nothing" — join()
+    // on [] would send an empty query value, which the server's
+    // parseListParam treats as "no filter" (i.e. "everything"), the
+    // opposite of what Clear All means. This sentinel never matches a
+    // real Type/KAM/SPOC/Platform, so it naturally filters everything
+    // out without needing any server-side change.
+    const setListParam = (key, arr) => {
+      if (arr == null) return;
+      params.set(key, arr.length === 0 ? "__NONE__" : arr.join(","));
+    };
+    setListParam("types", selectedTypes);
+    setListParam("kams", selectedKams);
+    setListParam("spocs", selectedSpocs);
+    setListParam("platforms", selectedPlatforms);
     return params;
   };
 
@@ -561,10 +486,10 @@ export default function FYComparisonModule() {
     setSelectedPlatforms(null);
   };
   const filterSummary = [
-    selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
-    selectedKams != null ? `KAM: ${selectedKams.join(", ")}` : null,
-    selectedSpocs != null ? `SPOC: ${selectedSpocs.join(", ")}` : null,
-    selectedPlatforms != null ? `Platform: ${selectedPlatforms.join(", ")}` : null,
+    selectedTypes != null ? `Type: ${selectedTypes.length ? selectedTypes.join(", ") : "none"}` : null,
+    selectedKams != null ? `KAM: ${selectedKams.length ? selectedKams.join(", ") : "none"}` : null,
+    selectedSpocs != null ? `SPOC: ${selectedSpocs.length ? selectedSpocs.join(", ") : "none"}` : null,
+    selectedPlatforms != null ? `Platform: ${selectedPlatforms.length ? selectedPlatforms.join(", ") : "none"}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -579,6 +504,7 @@ export default function FYComparisonModule() {
           selected={selectedKams}
           onToggle={toggleKam}
           onSelectAll={() => setSelectedKams(null)}
+          onClearAll={() => setSelectedKams([])}
         />
         <MultiSelectDropdown
           label="SPOC"
@@ -586,6 +512,7 @@ export default function FYComparisonModule() {
           selected={selectedSpocs}
           onToggle={toggleSpoc}
           onSelectAll={() => setSelectedSpocs(null)}
+          onClearAll={() => setSelectedSpocs([])}
         />
         <MultiSelectDropdown
           label="Platform"
@@ -593,6 +520,7 @@ export default function FYComparisonModule() {
           selected={selectedPlatforms}
           onToggle={togglePlatform}
           onSelectAll={() => setSelectedPlatforms(null)}
+          onClearAll={() => setSelectedPlatforms([])}
         />
       </div>
     </div>

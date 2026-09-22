@@ -53,15 +53,17 @@ export function setTarget(fy, kam, type, value) {
   return value;
 }
 
-// Sums every real KAM's target for one fiscal year + type — powers the
-// "All KAM" aggregate view's read-only Target row. Scans all stored
-// entries rather than requiring the caller to pass a KAM list, so it
-// stays correct even if a KAM has a target set but no longer shows up
-// in the current CRM data. Never includes an "ALL" entry itself (there
-// isn't one — targets are never written under that key), so there's no
-// risk of double-counting if this function is ever called again.
-export function getSummedTargetsFor(fy, types) {
+// Sums KAMs' targets for one fiscal year + type — powers both the "All
+// KAM" aggregate view (kamFilter omitted — every real KAM) and a
+// specific multi-select of several KAMs at once (kamFilter given —
+// just those). Both are read-only client-side, since there's no single
+// target to edit once more than one KAM is being looked at together.
+// Scans all stored entries rather than requiring a full KAM list from
+// the caller, so it stays correct even if a KAM has a target set but
+// no longer shows up in the current CRM data.
+export function getSummedTargetsFor(fy, types, kamFilter = null) {
   const all = readAll();
+  const kamSet = kamFilter ? new Set(kamFilter) : null;
   const out = {};
   for (const type of types) {
     let sum = 0;
@@ -69,12 +71,27 @@ export function getSummedTargetsFor(fy, types) {
     for (const [k, v] of Object.entries(all)) {
       if (v == null) continue;
       const [kFy, kKam, kType] = k.split("|||");
-      if (kFy === fy && kType === type && kKam !== "ALL") {
-        sum += v;
-        anySet = true;
-      }
+      if (kFy !== fy || kType !== type || kKam === "ALL") continue;
+      if (kamSet && !kamSet.has(kKam)) continue;
+      sum += v;
+      anySet = true;
     }
     if (anySet) out[type] = sum;
+  }
+  return out;
+}
+
+// Every real KAM's target for one fiscal year + Type, as a { [kam]:
+// value } map — powers the KAM-wise Target chart on Engagement Status,
+// which needs one number per KAM (not summed together like the
+// function above).
+export function getAllTargetsForType(fy, type) {
+  const all = readAll();
+  const out = {};
+  for (const [k, v] of Object.entries(all)) {
+    if (v == null) continue;
+    const [kFy, kKam, kType] = k.split("|||");
+    if (kFy === fy && kType === type && kKam !== "ALL") out[kKam] = v;
   }
   return out;
 }
