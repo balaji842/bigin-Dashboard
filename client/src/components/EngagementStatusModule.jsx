@@ -7,6 +7,36 @@ import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
 import KamComparisonTables from "./KamComparisonTables.jsx";
 import KamTargetChart from "./KamTargetChart.jsx";
 
+// Multi-select Type pills, styled and positioned the same way as the
+// Overview/Conversion/Pipeline pages' Type filter — shared here by both
+// the KAM comparison tables and the KAM-wise Target chart below.
+function TypeFilterCard({ types, selected, onToggle }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+      <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">Type</p>
+      <div className="flex flex-wrap gap-2">
+        {types.map((t) => {
+          const active = selected == null || selected.includes(t);
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onToggle(t)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                active
+                  ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-transparent shadow-sm"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              {t}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SearchIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={props.className}>
@@ -262,6 +292,25 @@ export default function EngagementStatusModule() {
   const fy1 = "2025-2026";
   const fy2 = "2026-2027";
 
+  // Shared Cash / Kind / School Engagement filter — drives BOTH the KAM
+  // comparison tables and the KAM-wise Target chart below, so
+  // deselecting a Type here removes it from both at once instead of
+  // each having its own separate filter. null = every Type combined
+  // (the default). Additive: a pill click selects just that Type
+  // (starting from nothing), not "start from everyone checked and
+  // remove the one clicked" — that inverted version is what silently
+  // blocked target-editing before, since clicking one pill left the
+  // OTHER two active instead of narrowing to one.
+  const TYPES = ["Cash", "Kind", "School Engagement"];
+  const [selectedTypes, setSelectedTypes] = useState(null);
+  const toggleType = (value) => {
+    setSelectedTypes((prev) => {
+      const base = prev == null ? [] : prev;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      return next.length === 0 ? null : next;
+    });
+  };
+
   const [search, setSearch] = useState("");
 
   // One filter state per filterable (categorical) column — null means
@@ -508,7 +557,8 @@ export default function EngagementStatusModule() {
     search.trim() !== "" ||
     Object.values(filters).some((v) => v != null) ||
     pipelineOnly ||
-    sortColumn != null;
+    sortColumn != null ||
+    selectedTypes != null;
 
   const clearAllFilters = () => {
     setSearch("");
@@ -516,9 +566,11 @@ export default function EngagementStatusModule() {
     setPipelineOnly(false);
     setSortColumn(null);
     setSortDir(null);
+    setSelectedTypes(null);
   };
 
   const filterSummary = [
+    selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
     search.trim() ? `Search: "${search.trim()}"` : null,
     ...FILTERABLE_KEYS.filter((k) => filters[k] != null).map((k) => `${k}: ${filters[k].join(", ")}`),
     pipelineOnly ? "Pipeline Month only" : null,
@@ -561,8 +613,10 @@ export default function EngagementStatusModule() {
     <div className="space-y-5">
       <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
 
-      <KamComparisonTables fy1={fy1} fy2={fy2} />
-      <KamTargetChart fy={fy2} />
+      <TypeFilterCard types={TYPES} selected={selectedTypes} onToggle={toggleType} />
+
+      <KamComparisonTables fy1={fy1} fy2={fy2} selectedTypes={selectedTypes} />
+      <KamTargetChart fy={fy2} selectedTypes={selectedTypes} />
 
       {/* Summary cards — click to filter Engagement Status; the Total
           card resets that filter back to showing everyone. */}

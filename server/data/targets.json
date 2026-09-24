@@ -1,8 +1,19 @@
 {
-  "2026-2027|||Bank & NBFCs|||Cash": 10,
-  "2026-2027|||Bank & NBFCs|||Kind": 65,
+  "2026-2027|||Bank & NBFCs|||Cash": 2,
+  "2026-2027|||Bank & NBFCs|||Kind": 12,
   "2026-2027|||Bank & NBFCs|||School Engagement": 170,
-  "2026-2027|||PSUs|||Cash": 20,
-  "2026-2027|||Infrastructure & Environment|||Cash": 5,
-  "2026-2027|||Industries & Manufacturing|||Cash": 8
+  "2026-2027|||PSUs|||Cash": 4,
+  "2026-2027|||Infrastructure & Environment|||Cash": 8,
+  "2026-2027|||Industries & Manufacturing|||Cash": 8,
+  "2026-2027|||NGOs / NPOs|||Kind": 85,
+  "2026-2027|||Clubs|||Cash": 2,
+  "2026-2027|||NGOs / NPOs|||Cash": 2,
+  "2026-2027|||Individuals/ Alumni/ NRT|||Cash": 2,
+  "2026-2027|||Industries & Manufacturing|||Kind": 74,
+  "2026-2027|||IT & Services|||Kind": 29,
+  "2026-2027|||Clubs|||Kind": 11,
+  "2026-2027|||Infrastructure & Environment|||Kind": 23,
+  "2026-2027|||PSUs|||Kind": 28,
+  "2026-2027|||Individuals/ Alumni/ NRT|||Kind": 8,
+  "2026-2027|||IT & Services|||Cash": 2
 }

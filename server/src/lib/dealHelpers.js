@@ -491,9 +491,17 @@ export const STANDARD_TYPES = ["Cash", "Kind", "School Engagement"];
 // summing amount and unique donor count at both levels. Always returns
 // all 3 STANDARD_TYPES (zero-filled); Platforms are whatever's actually
 // present in the data for that Type, sorted alphabetically.
-export function buildTypePlatformBreakdown(donors) {
+// `typesToSeed` defaults to every Standard Type, so a KAM with zero
+// Cash deals (say) still shows an empty Cash column for a consistent
+// layout across different KAM selections. When the caller has an
+// active Type filter, pass just the selected types instead — that's
+// what makes a deselected Type (e.g. School Engagement) disappear from
+// the table entirely rather than showing up as an all-zero column,
+// since it's never pre-seeded and the input `donors` won't contain it
+// either.
+export function buildTypePlatformBreakdown(donors, typesToSeed = STANDARD_TYPES) {
   const byType = {};
-  for (const type of STANDARD_TYPES) byType[type] = { byPlatform: {}, donorKeys: new Set(), amount: 0 };
+  for (const type of typesToSeed) byType[type] = { byPlatform: {}, donorKeys: new Set(), amount: 0 };
 
   for (const d of donors) {
     const type = pick(d, "Type");
@@ -512,7 +520,7 @@ export function buildTypePlatformBreakdown(donors) {
     }
   }
 
-  const allTypeNames = new Set([...STANDARD_TYPES, ...Object.keys(byType)]);
+  const allTypeNames = new Set([...typesToSeed, ...Object.keys(byType)]);
   const types = [...allTypeNames].map((type) => {
     const info = byType[type] || { byPlatform: {}, donorKeys: new Set(), amount: 0 };
     const platforms = Object.keys(info.byPlatform).sort();

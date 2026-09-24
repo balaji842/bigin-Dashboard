@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { moneyCr, fullMoney, moneyForDonorType } from "../lib/format.js";
 import ExportButton from "./ExportButton.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
@@ -223,13 +223,44 @@ const PAGE_SIZE = 10;
 // Same "Donor History" table as the Conversion page, but for open
 // pipeline donors — "Month" here is the projected/expected conversion
 // month (a picklist field), not an actual closing date.
-function DonorHistoryTable({ rows, subtitle }) {
+const EMPTY_PIPELINE_DONOR_HISTORY_FILTERS = {
+  expectedMonth: null,
+  type: null,
+  donorType: null,
+  kam: null,
+  spoc: null,
+  platform: null,
+};
+
+// forwardRef so the page-level "Clear all filters" bar can reach in and
+// reset this table's own search/column-filters/sort — those are
+// otherwise entirely private to this component. onFiltersActiveChange
+// reports outward whenever they change, so that bar can light up even
+// though the filtering itself still happens in here.
+const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle, onFiltersActiveChange }, ref) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
-  const [filters, setFilters] = useState({ expectedMonth: null, type: null, donorType: null, kam: null, spoc: null, platform: null });
+  const [filters, setFilters] = useState(EMPTY_PIPELINE_DONOR_HISTORY_FILTERS);
   const [sortColumn, setSortColumn] = useState(null); // "account" | "amount" | null
   const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
   const [page, setPage] = useState(0);
+
+  const hasActiveFilters =
+    search.trim() !== "" || Object.values(filters).some((v) => v != null) || sortColumn != null;
+
+  useEffect(() => {
+    onFiltersActiveChange?.(hasActiveFilters);
+  }, [hasActiveFilters, onFiltersActiveChange]);
+
+  useImperativeHandle(ref, () => ({
+    clearFilters: () => {
+      setSearch("");
+      setFilters(EMPTY_PIPELINE_DONOR_HISTORY_FILTERS);
+      setSortColumn(null);
+      setSortDir(null);
+      setPage(0);
+    },
+  }));
 
   // Options are always computed from the full `rows` prop (not the
   // filtered set), so a column's checkbox list never shrinks as other
@@ -458,7 +489,7 @@ function DonorHistoryTable({ rows, subtitle }) {
       </div>
     </div>
   );
-}
+});
 
 const FY = "2026-2027";
 
@@ -484,6 +515,13 @@ export default function StandardPipelineModule() {
   // cards, breakdown table rows, Projected Conversion Month table).
   const [drilldown, setDrilldown] = useState(null); // { title, rows } | null
   const openDrilldown = (title, rows) => setDrilldown({ title, rows });
+
+  // The Donor History table below manages its own search/column-filter/
+  // sort state internally — this tracks whether any of THAT is active,
+  // and holds a ref to it, so the page-level "Clear all filters" bar
+  // can reflect and reset it too.
+  const donorTableRef = useRef(null);
+  const [tableFiltersActive, setTableFiltersActive] = useState(false);
 
   const toggleType = (value) => {
     setSelectedTypes((current) => {
@@ -574,16 +612,18 @@ export default function StandardPipelineModule() {
     return scoped.monthWise.filter((m) => m.amount !== 0 || m.donors !== 0);
   }, [scoped]);
 
-  const hasActiveFilters = selectedTypes != null || selectedPlatforms != null || scope !== "total";
+  const hasActiveFilters = selectedTypes != null || selectedPlatforms != null || scope !== "total" || tableFiltersActive;
   const clearAllFilters = () => {
     setSelectedTypes(null);
     setSelectedPlatforms(null);
     setScope("total");
+    donorTableRef.current?.clearFilters();
   };
   const filterSummary = [
     selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
     selectedPlatforms != null ? `Platform: ${selectedPlatforms.join(", ")}` : null,
     scope === "month" ? `Scope: ${data?.currentMonth?.name || "Current"} Month` : null,
+    tableFiltersActive ? "Donor History table filters" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -745,12 +785,14 @@ export default function StandardPipelineModule() {
           </div>
 
           <DonorHistoryTable
+            ref={donorTableRef}
             rows={scoped.table}
             subtitle={
               scope === "total"
                 ? "A detailed list of donors, their pipeline value and key details."
                 : `Scoped to: ${scoped.label}.`
             }
+            onFiltersActiveChange={setTableFiltersActive}
           />
         </>
       )}

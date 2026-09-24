@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 // pills. `selected: null` means "everything" selected (every box shown
 // checked); an explicit array (including an empty one, reachable via
 // "Clear all") narrows it. Closes when clicking outside of it.
-export default function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll, onClearAll }) {
+export default function MultiSelectDropdown({ label, options, selected, onToggle, onSelectAll, onClearAll, onOnly }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -79,18 +79,30 @@ export default function MultiSelectDropdown({ label, options, selected, onToggle
             {options.map((opt) => {
               const checked = allSelected || selected.includes(opt);
               return (
-                <label
+                <div
                   key={opt}
-                  className="flex items-center gap-2.5 px-3.5 py-2 text-sm text-navy-900 hover:bg-slate-50 cursor-pointer"
+                  className="group flex items-center justify-between gap-2 px-3.5 py-2 text-sm text-navy-900 hover:bg-slate-50"
                 >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggle(opt)}
-                    className="w-4 h-4 rounded border-slate-300 accent-indigo-600 cursor-pointer"
-                  />
-                  <span className="truncate">{opt}</span>
-                </label>
+                  <label className="flex items-center gap-2.5 min-w-0 cursor-pointer flex-1">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggle(opt)}
+                      className="w-4 h-4 rounded border-slate-300 accent-indigo-600 cursor-pointer shrink-0"
+                    />
+                    <span className="truncate">{opt}</span>
+                  </label>
+                  {onOnly && (
+                    <button
+                      type="button"
+                      onClick={() => onOnly(opt)}
+                      className="shrink-0 text-[11px] font-semibold text-indigo-600 opacity-0 group-hover:opacity-100 hover:underline"
+                      title={`Show just ${opt}`}
+                    >
+                      Only
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>

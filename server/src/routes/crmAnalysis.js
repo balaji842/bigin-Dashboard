@@ -720,6 +720,7 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
   const fy2 = req.query.fy2 || "2026-2027";
   const spocList = parseListParam(req.query.spoc);
   const donorTypeList = parseListParam(req.query.donorType);
+  const typeList = parseListParam(req.query.types);
 
   if (!kamParam) {
     return res.status(400).json({ error: "kam query param is required" });
@@ -737,7 +738,8 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
     const matchesFilters = (d) =>
       (isAllKam || (kamList && kamList.includes(pick(d, "Pipeline_KAM")))) &&
       (!spocList || spocList.includes(pick(d, "Spoc"))) &&
-      (!donorTypeList || donorTypeList.includes(pick(d, "Type_of_donor")));
+      (!donorTypeList || donorTypeList.includes(pick(d, "Type_of_donor"))) &&
+      (!typeList || typeList.includes(pick(d, "Type")));
 
     const closeddonors = donors.filter(isClosed).filter(matchesFilters);
     const standarddonors = donors.filter(isStandardPipeline).filter(matchesFilters);
@@ -759,9 +761,9 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
 
       return {
         fy,
-        conversion: buildTypePlatformBreakdown(closedFY),
-        ytd: buildTypePlatformBreakdown(ytddonors),
-        pipeline: buildTypePlatformBreakdown(standardFY),
+        conversion: buildTypePlatformBreakdown(closedFY, typeList || undefined),
+        ytd: buildTypePlatformBreakdown(ytddonors, typeList || undefined),
+        pipeline: buildTypePlatformBreakdown(standardFY, typeList || undefined),
       };
     }
 
@@ -818,32 +820,49 @@ router.get("/crm-analysis/targets", (req, res) => {
   }
 });
 
-// GET /api/crm-analysis/kam-targets-overview?fy=2026-2027&type=Cash
+// GET /api/crm-analysis/kam-targets-overview?fy=2026-2027&types=Cash,Kind
 //
 // One row per KAM — their Total Conversion (closed deals) amount for
 // that Type + fiscal year, alongside their Target for the same Type +
-// year — powering the KAM-wise Target chart on Engagement Status. A
-// KAM shows up here if it has EITHER an achieved amount OR a target
-// set (a KAM with a target but zero conversions yet still needs to
-// appear, at 0 achieved).
+// year — powering the KAM-wise Target chart on Engagement Status.
+// Every KAM that exists anywhere in the CRM shows up here, even ones
+// with zero conversions and no target yet for the selected Type(s) —
+// otherwise there'd be no row to set an initial target on for a KAM
+// that simply hasn't converted any Cash (say) donors yet.
 router.get("/crm-analysis/kam-targets-overview", async (req, res) => {
   const fy = req.query.fy || "2026-2027";
-  const type = req.query.type;
+  const types = parseListParam(req.query.types);
 
-  if (!type) {
-    return res.status(400).json({ error: "type query param is required" });
+  if (!types || types.length === 0) {
+    return res.status(400).json({ error: "types query param is required" });
   }
 
   try {
     const donors = await getPipelines();
     const closedFY = donors
       .filter(isClosed)
-      .filter((d) => pick(d, "Fiscal_year", "") === fy && pick(d, "Type") === type);
+      .filter((d) => pick(d, "Fiscal_year", "") === fy && types.includes(pick(d, "Type")));
 
     const achievedByKam = groupSummary(closedFY, "Pipeline_KAM"); // [{ name, amount, donors }]
-    const targetsByKam = getAllTargetsForType(fy, type); // { [kam]: value }
+
+    // Sum each selected Type's target per KAM into one combined figure —
+    // the same "combine several selected values" idea the Type filter
+    // already uses everywhere else on the dashboard.
+    const targetsByKam = {};
+    for (const type of types) {
+      for (const [kam, value] of Object.entries(getAllTargetsForType(fy, type))) {
+        targetsByKam[kam] = (targetsByKam[kam] || 0) + value;
+      }
+    }
+
+    // Every KAM in the whole CRM (not just ones with Cash data or an
+    // existing Cash target) — this is what makes a KAM like "IT &
+    // Services" still show up under a Type it hasn't converted anything
+    // in yet, so a target can be set for it from scratch.
+    const allKamNames = [...new Set(donors.map((d) => pick(d, "Pipeline_KAM")).filter((n) => n && n !== "Unspecified"))];
 
     const kamNames = new Set([
+      ...allKamNames,
       ...achievedByKam.map((r) => r.name).filter((n) => n !== "Unspecified"),
       ...Object.keys(targetsByKam),
     ]);
@@ -862,7 +881,7 @@ router.get("/crm-analysis/kam-targets-overview", async (req, res) => {
 
     res.json({
       fy,
-      type,
+      types,
       rows,
       generatedAt: new Date().toISOString(),
     });

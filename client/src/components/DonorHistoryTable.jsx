@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { moneyForDonorType } from "../lib/format.js";
 import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
@@ -58,13 +58,38 @@ function DonorTypeBadge({ donorType }) {
 
 const PAGE_SIZE = 10;
 
-export default function DonorHistoryTable({ donors, onSelectDonor }) {
+const EMPTY_FILTERS = { donorType: null, kam: null, spoc: null, platform: null };
+
+// forwardRef so the parent page's "Clear all filters" bar can reach in
+// and reset this table's own search/column-filters/sort — those are
+// otherwise entirely private to this component, which is exactly why
+// that bar didn't previously notice or clear them. onFiltersActiveChange
+// reports outward whenever they change, so the parent's bar can light
+// up even though the filtering itself still happens in here.
+const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSelectDonor, onFiltersActiveChange }, ref) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
-  const [filters, setFilters] = useState({ donorType: null, kam: null, spoc: null, platform: null });
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [sortColumn, setSortColumn] = useState(null); // "account" | "totalAmount" | null
   const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
   const [page, setPage] = useState(0);
+
+  const hasActiveFilters =
+    search.trim() !== "" || Object.values(filters).some((v) => v != null) || sortColumn != null;
+
+  useEffect(() => {
+    onFiltersActiveChange?.(hasActiveFilters);
+  }, [hasActiveFilters, onFiltersActiveChange]);
+
+  useImperativeHandle(ref, () => ({
+    clearFilters: () => {
+      setSearch("");
+      setFilters(EMPTY_FILTERS);
+      setSortColumn(null);
+      setSortDir(null);
+      setPage(0);
+    },
+  }));
 
   // Options are always computed from the full `donors` prop (not the
   // filtered set), so a column's checkbox list never shrinks as other
@@ -295,4 +320,6 @@ export default function DonorHistoryTable({ donors, onSelectDonor }) {
       </div>
     </div>
   );
-}
+});
+
+export default DonorHistoryTable;

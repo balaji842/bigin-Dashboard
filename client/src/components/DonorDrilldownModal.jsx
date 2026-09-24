@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { moneyCr, moneyForDonorType } from "../lib/format.js";
+import { moneyCr, fullMoney } from "../lib/format.js";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import ExportButton from "./ExportButton.jsx";
@@ -189,7 +189,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
                 <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                   <td className="px-4 py-2 text-slate-400">{i + 1}</td>
                   <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{d.account}</td>
-                  <td className="px-4 py-2 text-right whitespace-nowrap">{moneyForDonorType(d.amount, d.donorType)}</td>
+                  <td className="px-4 py-2 text-right whitespace-nowrap">{fullMoney(d.amount)}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.platform}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import DonorHistoryTable from "./DonorHistoryTable.jsx";
 import DonorHistoryModal from "./DonorHistoryModal.jsx";
@@ -266,12 +266,26 @@ export default function CRMOverview() {
     });
   };
 
-  const hasActiveFilters = selectedFYs != null || selectedDonorTypes != null || selectedTypes != null || selectedPlatforms != null;
+  // The Donor History table below manages its own search/column-filter/
+  // sort state internally — this just tracks whether any of THAT is
+  // currently active, and holds a ref to it, so the page-level "Clear
+  // all filters" bar can reflect and reset it too instead of only
+  // knowing about the FY/Type/Platform/Donor-Type selections above.
+  const donorTableRef = useRef(null);
+  const [tableFiltersActive, setTableFiltersActive] = useState(false);
+
+  const hasActiveFilters =
+    selectedFYs != null ||
+    selectedDonorTypes != null ||
+    selectedTypes != null ||
+    selectedPlatforms != null ||
+    tableFiltersActive;
   const clearAllFilters = () => {
     setSelectedFYs(null);
     setSelectedDonorTypes(null);
     setSelectedTypes(null);
     setSelectedPlatforms(null);
+    donorTableRef.current?.clearFilters();
   };
 
   useEffect(() => {
@@ -370,6 +384,7 @@ export default function CRMOverview() {
           selectedDonorTypes != null ? `Donor Type: ${selectedDonorTypes.join(", ")}` : null,
           selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
           selectedPlatforms != null ? `Platform: ${selectedPlatforms.join(", ")}` : null,
+          tableFiltersActive ? "Donor History table filters" : null,
         ]
           .filter(Boolean)
           .join(" · ")}
@@ -537,7 +552,12 @@ export default function CRMOverview() {
         </div>
       </div>
 
-      <DonorHistoryTable donors={donorHistory} onSelectDonor={setModalDonor} />
+      <DonorHistoryTable
+        ref={donorTableRef}
+        donors={donorHistory}
+        onSelectDonor={setModalDonor}
+        onFiltersActiveChange={setTableFiltersActive}
+      />
 
       <DonorDrilldownModal
         open={!!modalMonth}

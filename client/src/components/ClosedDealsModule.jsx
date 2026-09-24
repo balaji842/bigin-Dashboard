@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   LineChart,
   Line,
@@ -241,13 +241,37 @@ const PAGE_SIZE = 10;
 // The main "Donor History" table at the bottom of the page: search by
 // name/KAM/SPOC, per-column multi-select filters (Month, Type, Donor
 // Type, KAM, SPOC), CSV export, and numbered pagination.
-function DonorHistoryTable({ rows, subtitle }) {
+const EMPTY_DONOR_HISTORY_FILTERS = { month: null, type: null, donorType: null, kam: null, spoc: null, platform: null };
+
+// forwardRef so the page-level "Clear all filters" bar can reach in and
+// reset this table's own search/column-filters/sort — those are
+// otherwise entirely private to this component. onFiltersActiveChange
+// reports outward whenever they change, so that bar can light up even
+// though the filtering itself still happens in here.
+const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle, onFiltersActiveChange }, ref) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
-  const [filters, setFilters] = useState({ month: null, type: null, donorType: null, kam: null, spoc: null, platform: null });
+  const [filters, setFilters] = useState(EMPTY_DONOR_HISTORY_FILTERS);
   const [sortColumn, setSortColumn] = useState(null); // "account" | "amount" | null
   const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
   const [page, setPage] = useState(0);
+
+  const hasActiveFilters =
+    search.trim() !== "" || Object.values(filters).some((v) => v != null) || sortColumn != null;
+
+  useEffect(() => {
+    onFiltersActiveChange?.(hasActiveFilters);
+  }, [hasActiveFilters, onFiltersActiveChange]);
+
+  useImperativeHandle(ref, () => ({
+    clearFilters: () => {
+      setSearch("");
+      setFilters(EMPTY_DONOR_HISTORY_FILTERS);
+      setSortColumn(null);
+      setSortDir(null);
+      setPage(0);
+    },
+  }));
 
   // Options are always computed from the full `rows` prop (not the
   // filtered set), so a column's checkbox list never shrinks as other
@@ -477,7 +501,7 @@ function DonorHistoryTable({ rows, subtitle }) {
       </div>
     </div>
   );
-}
+});
 
 const PREV_FY = "2025-2026";
 
@@ -625,6 +649,13 @@ export default function CloseddonorsModule() {
   // cards, breakdown table rows, Month-wise table).
   const [drilldown, setDrilldown] = useState(null); // { title, rows } | null
   const openDrilldown = (title, rows) => setDrilldown({ title, rows });
+
+  // The Donor History table below manages its own search/column-filter/
+  // sort state internally — this tracks whether any of THAT is active,
+  // and holds a ref to it, so the page-level "Clear all filters" bar
+  // can reflect and reset it too.
+  const donorTableRef = useRef(null);
+  const [tableFiltersActive, setTableFiltersActive] = useState(false);
 
   // The "Total Pipeline" KPI card's donor count needs the open-pipeline
   // table, which is only fetched once the "pipeline" scope has actually
@@ -799,11 +830,12 @@ export default function CloseddonorsModule() {
     }));
   }, [data, prevYearData]);
 
-  const hasActiveFilters = selectedTypes != null || selectedPlatforms != null || scope !== "fy";
+  const hasActiveFilters = selectedTypes != null || selectedPlatforms != null || scope !== "fy" || tableFiltersActive;
   const clearAllFilters = () => {
     setSelectedTypes(null);
     setSelectedPlatforms(null);
     setScope("fy");
+    donorTableRef.current?.clearFilters();
   };
   const filterSummary = [
     selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
@@ -813,6 +845,7 @@ export default function CloseddonorsModule() {
       : scope === "month"
       ? `Scope: ${data?.currentMonth?.name || "Current"} Month`
       : null,
+    tableFiltersActive ? "Donor History table filters" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1001,12 +1034,14 @@ export default function CloseddonorsModule() {
           </div>
 
           <DonorHistoryTable
+            ref={donorTableRef}
             rows={scoped.table}
             subtitle={
               scope === "fy"
                 ? "A detailed list of donors, their contributions and key details."
                 : `Scoped to: ${scoped.label}.`
             }
+            onFiltersActiveChange={setTableFiltersActive}
           />
         </>
       )}

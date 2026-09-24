@@ -228,7 +228,7 @@ function YearTable({ kamLabel, readOnly, fy, mode, yearData, monthLabel, targets
   );
 }
 
-export default function KamComparisonTables({ fy1, fy2 }) {
+export default function KamComparisonTables({ fy1, fy2, selectedTypes }) {
   const [kams, setKams] = useState([]);
   // null = "All KAM" (every KAM aggregated — the default); an array
   // (including an empty one, reachable via "Clear all") is the
@@ -291,6 +291,10 @@ export default function KamComparisonTables({ fy1, fy2 }) {
   const spocParam = selectedSpocs == null ? null : selectedSpocs.length === 0 ? "__NONE__" : selectedSpocs.join(",");
   const donorTypeParam =
     selectedDonorTypes == null ? null : selectedDonorTypes.length === 0 ? "__NONE__" : selectedDonorTypes.join(",");
+  // Shared with the KAM-wise Target chart below — deselecting a Type up
+  // there removes it from these comparison tables too, not just the
+  // chart.
+  const typesParam = selectedTypes == null ? null : selectedTypes.length === 0 ? "__NONE__" : selectedTypes.join(",");
 
   const kamLabel =
     selectedKams == null ? "All KAM" : selectedKams.length === 0 ? "No KAM selected" : selectedKams.join(", ");
@@ -301,6 +305,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
     const params = new URLSearchParams({ kam: kamParam, fy1, fy2 });
     if (spocParam != null) params.set("spoc", spocParam);
     if (donorTypeParam != null) params.set("donorType", donorTypeParam);
+    if (typesParam != null) params.set("types", typesParam);
     Promise.all([
       fetch(`/api/crm-analysis/kam-comparison?${params.toString()}`).then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -319,7 +324,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
       .finally(() => setLoadingComparison(false));
   };
 
-  useEffect(reload, [kamParam, spocParam, donorTypeParam, fy1, fy2]);
+  useEffect(reload, [kamParam, spocParam, donorTypeParam, typesParam, fy1, fy2]);
 
   const handleTargetChange = (yearKey, fyValue, type, value) => {
     setTargets((prev) => ({ ...prev, [yearKey]: { ...prev[yearKey], [type]: value } }));
@@ -355,6 +360,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
               onToggle={toggleKam}
               onSelectAll={() => setSelectedKams(null)}
               onClearAll={() => setSelectedKams([])}
+              onOnly={(kam) => setSelectedKams([kam])}
             />
           </div>
 
@@ -367,6 +373,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
               onToggle={toggleSpoc}
               onSelectAll={() => setSelectedSpocs(null)}
               onClearAll={() => setSelectedSpocs([])}
+              onOnly={(spoc) => setSelectedSpocs([spoc])}
             />
           </div>
 
@@ -379,6 +386,7 @@ export default function KamComparisonTables({ fy1, fy2 }) {
               onToggle={toggleDonorType}
               onSelectAll={() => setSelectedDonorTypes(null)}
               onClearAll={() => setSelectedDonorTypes([])}
+              onOnly={(donorType) => setSelectedDonorTypes([donorType])}
             />
           </div>
         </div>
