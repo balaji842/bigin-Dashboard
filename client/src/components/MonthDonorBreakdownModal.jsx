@@ -13,6 +13,24 @@ function DiffBadge({ pct, amount }) {
   );
 }
 
+// Used for the Matching Donors table's "FY {fy2} Month" column — always
+// pill-styled (never falls back to plain text) so every row in that
+// column looks consistent. Amber + a tooltip flags a donor who shifted
+// which month they gave in; a plain slate pill means they gave in the
+// same month you clicked, nothing unusual to flag.
+function MonthPill({ month, clickedMonth }) {
+  if (!month) return <span className="text-slate-300">—</span>;
+  const shifted = month !== clickedMonth;
+  return (
+    <span
+      className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap bg-amber-50 text-amber-700"
+      title={shifted ? `Gave again in ${month} instead of ${clickedMonth}` : undefined}
+    >
+      {month}
+    </span>
+  );
+}
+
 function BucketSection({ title, donorCount, totalAmount, children }) {
   return (
     <div className="rounded-xl border border-slate-100 overflow-hidden">
@@ -138,12 +156,24 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
       { key: "fy1Amount", type: "number" },
     ]
   );
-  const newDonors = useBucketTable(
-    data?.newDonors?.rows || [],
+  // "Returning" — gave this month in fy2, AND gave in fy1 at some OTHER
+  // month (shifted timing, not a new donor).
+  const returning = useBucketTable(
+    data?.returning?.rows || [],
     ["fy1Type", "fy2Type", "platform", "kam", "spoc"],
     [
       { key: "account", type: "string" },
       { key: "fy1Amount", type: "number" },
+      { key: "fy2Amount", type: "number" },
+    ]
+  );
+  // "New" — gave this month in fy2, with NO giving history anywhere
+  // (not fy1, not any earlier year). Genuinely first-time donors.
+  const newDonors = useBucketTable(
+    data?.newDonors?.rows || [],
+    ["fy2Type", "platform", "kam", "spoc"],
+    [
+      { key: "account", type: "string" },
       { key: "fy2Amount", type: "number" },
     ]
   );
@@ -193,7 +223,7 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
                   <table className="w-full text-sm min-w-[900px]">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                        <th className="px-4 py-2 font-semibold">#</th>
+                        <th className="px-4 py-2 font-semibold">S.No</th>
                         <SortTh label="Donor" field="account" table={matching} />
                         <SortTh label={`FY ${fy1} Amount`} field="fy1Amount" table={matching} align="right" />
                         <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={matching} align="right" />
@@ -215,13 +245,7 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
                           <td className="px-4 py-2 whitespace-nowrap">{r.fy1Type}</td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.fy2Type}</td>
                           <td className="px-4 py-2 whitespace-nowrap">
-                            {r.fy2Month && r.fy2Month !== monthName ? (
-                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700" title={`Gave again in ${r.fy2Month} instead of ${monthName}`}>
-                                {r.fy2Month}
-                              </span>
-                            ) : (
-                              r.fy2Month || "—"
-                            )}
+                            <MonthPill month={r.fy2Month} clickedMonth={monthName} />
                           </td>
                           <td className="px-4 py-2 text-right"><DiffBadge pct={r.diffPct} amount={r.diffAmount} /></td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
@@ -239,7 +263,7 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
                   <table className="w-full text-sm min-w-[640px]">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                        <th className="px-4 py-2 font-semibold">#</th>
+                        <th className="px-4 py-2 font-semibold">S.No</th>
                         <SortTh label="Donor" field="account" table={missing} />
                         <SortTh label={`FY ${fy1} Amount`} field="fy1Amount" table={missing} align="right" />
                         <FilterTh label={`FY ${fy1} Type`} field="fy1Type" table={missing} />
@@ -264,16 +288,60 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
                 </div>
               </BucketSection>
 
-              <BucketSection title="New Donors" donorCount={newDonors.filtered.length} totalAmount={newDonors.filtered.reduce((s, r) => s + (r.fy2Amount || 0), 0)}>
+              <BucketSection
+                title="Returning Donors (Different Month)"
+                donorCount={returning.filtered.length}
+                totalAmount={returning.filtered.reduce((s, r) => s + (r.fy2Amount || 0), 0)}
+              >
                 <div className="overflow-x-auto bg-white">
                   <table className="w-full text-sm min-w-[880px]">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                        <th className="px-4 py-2 font-semibold">#</th>
+                        <th className="px-4 py-2 font-semibold">S.No</th>
+                        <SortTh label="Donor" field="account" table={returning} />
+                        <SortTh label={`FY ${fy1} Amount`} field="fy1Amount" table={returning} align="right" />
+                        <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={returning} align="right" />
+                        <FilterTh label={`FY ${fy1} Type`} field="fy1Type" table={returning} />
+                        <FilterTh label={`FY ${fy2} Type`} field="fy2Type" table={returning} />
+                        <FilterTh label="Platform" field="platform" table={returning} />
+                        <FilterTh label="KAM" field="kam" table={returning} />
+                        <FilterTh label="SPOC" field="spoc" table={returning} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {returning.filtered.map((r, i) => (
+                        <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
+                          <td className="px-4 py-2 text-slate-400">{i + 1}</td>
+                          <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
+                          <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy1Amount)}</td>
+                          <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy2Amount)}</td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {r.fy1Type}{r.fy1Month ? ` (${r.fy1Month})` : ""}
+                          </td>
+                          <td className="px-4 py-2 whitespace-nowrap">{r.fy2Type}</td>
+                          <td className="px-4 py-2 whitespace-nowrap">{r.platform}</td>
+                          <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
+                          <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
+                        </tr>
+                      ))}
+                      {returning.filtered.length === 0 && <EmptyRow span={9} />}
+                    </tbody>
+                  </table>
+                </div>
+              </BucketSection>
+
+              <BucketSection
+                title="New Donors"
+                donorCount={newDonors.filtered.length}
+                totalAmount={newDonors.filtered.reduce((s, r) => s + (r.fy2Amount || 0), 0)}
+              >
+                <div className="overflow-x-auto bg-white">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                        <th className="px-4 py-2 font-semibold">S.No</th>
                         <SortTh label="Donor" field="account" table={newDonors} />
-                        <SortTh label={`FY ${fy1} Amount`} field="fy1Amount" table={newDonors} align="right" />
                         <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={newDonors} align="right" />
-                        <FilterTh label={`FY ${fy1} Type`} field="fy1Type" table={newDonors} />
                         <FilterTh label={`FY ${fy2} Type`} field="fy2Type" table={newDonors} />
                         <FilterTh label="Platform" field="platform" table={newDonors} />
                         <FilterTh label="KAM" field="kam" table={newDonors} />
@@ -285,20 +353,14 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
                         <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                           <td className="px-4 py-2 text-slate-400">{i + 1}</td>
                           <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
-                          <td className="px-4 py-2 text-right whitespace-nowrap">
-                            {r.fy1Amount == null ? <span className="text-slate-300">—</span> : moneyCr(r.fy1Amount)}
-                          </td>
                           <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy2Amount)}</td>
-                          <td className="px-4 py-2 whitespace-nowrap">
-                            {r.fy1Type ? `${r.fy1Type}${r.fy1Month ? ` (${r.fy1Month})` : ""}` : <span className="text-slate-300">—</span>}
-                          </td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.fy2Type}</td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.platform}</td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
                           <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
                         </tr>
                       ))}
-                      {newDonors.filtered.length === 0 && <EmptyRow span={9} />}
+                      {newDonors.filtered.length === 0 && <EmptyRow span={7} />}
                     </tbody>
                   </table>
                 </div>
@@ -309,7 +371,7 @@ export default function MonthDonorBreakdownModal({ open, onClose, monthName, fy1
                   <table className="w-full text-sm min-w-[820px]">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                        <th className="px-4 py-2 font-semibold">#</th>
+                        <th className="px-4 py-2 font-semibold">S.No</th>
                         <SortTh label="Donor" field="account" table={past} />
                         <th className="px-4 py-2 font-semibold">Prior FY Giving</th>
                         <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={past} align="right" />

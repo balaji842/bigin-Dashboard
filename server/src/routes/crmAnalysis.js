@@ -447,12 +447,19 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
         diffPct =
           m1.amount > 0 ? (diffAmount / m1.amount) * 100 : m2.amount > 0 ? 100 : null;
       }
+      // Same Matching/Missing donor buckets shown in the "Difference"
+      // popup for this month — surfaced here too as their own columns
+      // (replacing a flat FY2 "Donors" count) so the retention picture
+      // is visible without opening that popup for every single month.
+      const breakdown = buildMonthDonorBreakdown(closeddonors, fy1, fy2, m1.name);
       return {
         name: m1.name,
         amountA: m1.amount,
         donorsA: m1.donors,
         amountB: m2.amount,
         donorsB: m2.donors,
+        matchingDonors: breakdown.matching.donorCount,
+        missingDonors: breakdown.missing.donorCount,
         diffPct,
         diffAmount,
       };

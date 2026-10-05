@@ -194,10 +194,23 @@ export function monthNameOf(closingDate) {
   return isNaN(d) ? null : d.toLocaleString("en-US", { month: "long" });
 }
 
-// Builds the 4-way donor breakdown (Matching / Missing / New / Past) for
-// one calendar month, comparing fy1 vs fy2. See route comment for the
-// exact definition of each bucket. `donors` should already be filtered to
-// isClosed (and any Type filter) before calling this.
+// Builds the 5-way donor breakdown (Matching / Missing / Returning
+// (different month) / New / Past) for one calendar month, comparing fy1
+// vs fy2. See route comment for the exact definition of each bucket.
+// `donors` should already be filtered to isClosed (and any Type filter)
+// before calling this.
+//
+//   - matching:  gave in fy1's clicked month AND gave again somewhere in
+//                fy2 (any month)
+//   - missing:   gave in fy1's clicked month, gave NOTHING in fy2 at all
+//   - returning: gave in fy2's clicked month, AND gave in fy1 at some
+//                OTHER month (i.e. shifted when they gave, not new)
+//   - newDonors: gave in fy2's clicked month, with NO giving history at
+//                all — not in fy1, not in any earlier year either. A
+//                genuinely first-time donor.
+//   - past:      gave in fy2's clicked month, nothing in fy1, but DID
+//                give in some earlier fiscal year (a lapsed donor
+//                returning)
 export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
   const byDonor = {}; // donorKey -> { account, byFY: { [fiscalYear]: [entry, ...] } }
 
@@ -239,7 +252,8 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
 
   const matching = [];
   const missing = [];
-  const newDonors = [];
+  const returning = [];
+  const trulyNew = [];
   const past = [];
 
   for (const info of Object.values(byDonor)) {
@@ -263,7 +277,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
       // somewhere in FY2" — not necessarily the SAME month. A donor who
       // gave in April 2025-2026 and again in July 2026-2027 still
       // counts as matching (they came back), just in a different month
-      // — that's exactly what the new Month column below is for. Using
+      // — that's exactly what the Month column below is for. Using
       // fy2All (every FY2 entry for this donor) rather than just
       // fy2Month means their full FY2 giving shows here even when it
       // spans more than one month.
@@ -296,8 +310,10 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
     } else if (inFY2Month) {
       const a2 = aggregate(fy2Month);
       if (inFY1Any) {
+        // Shifted which month they gave in — not new, just gave fy1
+        // somewhere other than this month.
         const a1 = aggregate(fy1All);
-        newDonors.push({
+        returning.push({
           account: info.account,
           fy1Amount: a1.amount,
           fy1Type: a1.type,
@@ -309,6 +325,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
           spoc: a2.spoc,
         });
       } else if (inOther) {
+        // Lapsed donor returning after a gap of one or more years.
         past.push({
           account: info.account,
           priorSummary: priorYearsLabel(info.byFY),
@@ -318,11 +335,18 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
           kam: a2.kam,
           spoc: a2.spoc,
         });
+      } else {
+        // Genuinely first-time donor: no fy1 giving, no giving in any
+        // earlier fiscal year either.
+        trulyNew.push({
+          account: info.account,
+          fy2Amount: a2.amount,
+          fy2Type: a2.type,
+          platform: a2.platform,
+          kam: a2.kam,
+          spoc: a2.spoc,
+        });
       }
-      // else: a genuinely first-time donor with no giving history at
-      // all (not even in fy1, not in any earlier year either) — the FY
-      // Comparison page's "New Donors" popup intentionally excludes
-      // these ("No prior giving" rows added no useful signal here).
     }
     // else: no activity in this month for either year — irrelevant to this view.
   }
@@ -332,7 +356,8 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
   return {
     matching: { rows: matching, donorCount: matching.length, totalAmount: sumBy(matching, "fy2Amount") },
     missing: { rows: missing, donorCount: missing.length, totalAmount: sumBy(missing, "fy1Amount") },
-    newDonors: { rows: newDonors, donorCount: newDonors.length, totalAmount: sumBy(newDonors, "fy2Amount") },
+    returning: { rows: returning, donorCount: returning.length, totalAmount: sumBy(returning, "fy2Amount") },
+    newDonors: { rows: trulyNew, donorCount: trulyNew.length, totalAmount: sumBy(trulyNew, "fy2Amount") },
     past: { rows: past, donorCount: past.length, totalAmount: sumBy(past, "fy2Amount") },
   };
 }

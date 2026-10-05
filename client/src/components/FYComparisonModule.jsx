@@ -283,19 +283,24 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
         <p className="font-display font-semibold text-sm">By Month</p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[720px]">
+        <table className="w-full text-sm min-w-[820px]">
           <thead>
             <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
               <th rowSpan={2} className="px-4 py-2 font-semibold text-left align-bottom">Month</th>
               <th colSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy1}</th>
-              <th colSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy2}</th>
+              <th colSpan={3} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy2}</th>
               <th rowSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100 align-bottom">Difference</th>
             </tr>
             <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
               <th className="px-4 py-1.5 font-medium border-l border-slate-100">Amount</th>
               <th className="px-4 py-1.5 font-medium">Donors</th>
               <th className="px-4 py-1.5 font-medium border-l border-slate-100">Amount</th>
-              <th className="px-4 py-1.5 font-medium">Donors</th>
+              <th className="px-4 py-1.5 font-medium" title="FY 2025-2026 donors who gave again in FY 2026-2027 (any month)">
+                Matching Donors
+              </th>
+              <th className="px-4 py-1.5 font-medium" title="FY 2025-2026 donors who haven't given at all in FY 2026-2027 yet">
+                Missing Donors
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -318,16 +323,31 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
                 </td>
                 <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{moneyCr(r.amountB)}</td>
                 <td className="px-4 py-2 text-right">
-                  {r.donorsB > 0 ? (
+                  {r.matchingDonors > 0 ? (
                     <button
                       type="button"
-                      onClick={() => onDonorCountClick(fy2, r.name)}
-                      className="text-navy-700 font-semibold hover:underline cursor-pointer w-full text-right"
+                      onClick={() => onDiffClick(r.name)}
+                      className="text-emerald-600 font-semibold hover:underline cursor-pointer w-full text-right"
+                      title={`See the ${r.matchingDonors} matching donor(s) for ${r.name}`}
                     >
-                      {r.donorsB}
+                      {r.matchingDonors}
                     </button>
                   ) : (
-                    <span className="text-slate-400">{r.donorsB}</span>
+                    <span className="text-slate-400">{r.matchingDonors}</span>
+                  )}
+                </td>
+                <td className="px-4 py-2 text-right">
+                  {r.missingDonors > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onDiffClick(r.name)}
+                      className="text-red-500 font-semibold hover:underline cursor-pointer w-full text-right"
+                      title={`See the ${r.missingDonors} missing donor(s) for ${r.name}`}
+                    >
+                      {r.missingDonors}
+                    </button>
+                  ) : (
+                    <span className="text-slate-400">{r.missingDonors}</span>
                   )}
                 </td>
                 <td className="px-4 py-2 text-right border-l border-slate-100 whitespace-nowrap">

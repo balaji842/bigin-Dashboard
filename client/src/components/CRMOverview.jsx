@@ -162,7 +162,13 @@ function buildDonorHistory(table) {
       };
     }
     const entry = byAccount[row.account];
-    entry.totalAmount += row.amount || 0;
+    // Only closed/converted deals count toward the table's Total
+    // Amount — pipeline (not-yet-closed) amounts are intentionally left
+    // out here. They're still visible per-donor via the FY-split popup
+    // (click the donor's name), which already shows converted vs.
+    // pipeline separately — this just stops pipeline from silently
+    // inflating the headline total shown in this table.
+    if (row.subPipeline !== "Standard Pipeline") entry.totalAmount += row.amount || 0;
     if (row.donorType && row.donorType !== "Unspecified") entry.donorTypes.add(row.donorType);
     if (row.kam && row.kam !== "Unspecified") entry.kams.add(row.kam);
     if (row.spoc && row.spoc !== "Unspecified") entry.spocs.add(row.spoc);
