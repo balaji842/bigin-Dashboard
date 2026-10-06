@@ -226,16 +226,24 @@ function AmountBreakdown({ amount, donorType }) {
   return amount != null ? moneyForDonorType(amount, donorType) : <span className="text-slate-300">—</span>;
 }
 
-// Month column lists every distinct month that donor gave in for that
-// FY+Type, comma-separated, with duplicates collapsed — e.g. two March
-// deals plus one April deal show "March, April", not "March, March,
-// April". Order follows the underlying deals array (most recent first).
-function MonthBreakdown({ month, deals }) {
+// Single source of truth for the Conversion Month text: every distinct
+// month that donor gave in for that FY+Type, comma-separated, with
+// duplicates collapsed — e.g. two March deals plus one April deal give
+// "March, April", not "March, March, April". Order follows the
+// underlying deals array (most recent first). Used by BOTH the on-screen
+// cell and the CSV export, so what you see in the table is exactly what
+// lands in Excel (previously the export only wrote the single
+// "last deal" month, so multi-month donors lost all but one).
+function monthsText(month, deals) {
   if (deals && deals.length > 1) {
-    const uniqueMonths = [...new Set(deals.map((d) => d.month).filter(Boolean))];
-    return uniqueMonths.length > 0 ? <span>{uniqueMonths.join(", ")}</span> : <span className="text-slate-300">—</span>;
+    return [...new Set(deals.map((d) => d.month).filter(Boolean))].join(", ");
   }
-  return month || <span className="text-slate-300">—</span>;
+  return month || "";
+}
+
+function MonthBreakdown({ month, deals }) {
+  const text = monthsText(month, deals);
+  return text ? <span>{text}</span> : <span className="text-slate-300">—</span>;
 }
 
 function EngagementPill({ engaged }) {
@@ -386,40 +394,74 @@ export default function EngagementStatusModule() {
     }
   };
 
-  // FY1/FY2 Type of Engagement filters behave differently depending on
-  // whether one or both are active:
-  //   - Only ONE set: plain row-level filter on that side (pick "Cash"
-  //     on FY1 -> only FY1=Cash rows show, Kind rows are hidden).
-  //   - BOTH set: cross-year mode — finds donors who have *some* row
-  //     matching the FY1 filter AND *some* row matching the FY2 filter
-  //     (e.g. gave Kind in FY1, Cash in FY2), then shows only the rows
-  //     that actually match one side or the other for those donors —
-  //     not every unrelated row that donor happens to have.
+  // FY1 / FY2 Type of Engagement filters each narrow ONLY their own
+  // side — the other year's columns keep showing whatever that donor
+  // really gave.
+  //
+  // Each donor is stored as one row per Type (e.g. a Cash row and a
+  // School Engagement row). Filtering FY1 = Cash used to drop every row
+  // whose FY1 type wasn't Cash, which also threw away the row holding
+  // that donor's FY2 School Engagement gift — so FY2 showed blank and
+  // you couldn't tell what they gave. Now:
+  //   1. A donor qualifies if they have a row matching each active filter
+  //      (FY1 filter -> some FY1 row matches; FY2 filter -> some FY2 row
+  //      matches; both -> both).
+  //   2. For qualifying donors, a row whose FY1 type doesn't match the
+  //      FY1 filter has just its FY1 half blanked (not the whole row),
+  //      so its FY2 half stays visible. Same for FY2 vs the FY2 filter.
+  //   3. A row with nothing left on either side is dropped.
   const filteredRows = useMemo(() => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
     const fy1Filter = filters.fy1Type;
     const fy2Filter = filters.fy2Type;
 
+    // Blank one year's half of a row. The Difference / % / Amount
+    // Difference cells compare the two years, so they can't be shown
+    // once one side is gone.
+    const blankFy1 = (r) => ({
+      ...r,
+      fy1Amount: null,
+      fy1Type: null,
+      fy1Month: null,
+      fy1Deals: [],
+      diffAmount: null,
+      absDiffAmount: null,
+      diffPct: null,
+    });
+    const blankFy2 = (r) => ({
+      ...r,
+      fy2Amount: null,
+      fy2Type: null,
+      fy2Month: null,
+      fy2Deals: [],
+      diffAmount: null,
+      absDiffAmount: null,
+      diffPct: null,
+    });
+
     let baseRows = data.rows;
 
-    if (fy1Filter != null && fy2Filter != null) {
+    if (fy1Filter != null || fy2Filter != null) {
       const fy1Donors = new Set();
       const fy2Donors = new Set();
       for (const r of data.rows) {
-        if (r.fy1Type && fy1Filter.includes(r.fy1Type)) fy1Donors.add(r.account);
-        if (r.fy2Type && fy2Filter.includes(r.fy2Type)) fy2Donors.add(r.account);
+        if (fy1Filter != null && r.fy1Type && fy1Filter.includes(r.fy1Type)) fy1Donors.add(r.account);
+        if (fy2Filter != null && r.fy2Type && fy2Filter.includes(r.fy2Type)) fy2Donors.add(r.account);
       }
-      baseRows = data.rows.filter((r) => {
-        if (!fy1Donors.has(r.account) || !fy2Donors.has(r.account)) return false;
-        const matchesFy1 = r.fy1Type && fy1Filter.includes(r.fy1Type);
-        const matchesFy2 = r.fy2Type && fy2Filter.includes(r.fy2Type);
-        return matchesFy1 || matchesFy2;
-      });
-    } else if (fy1Filter != null) {
-      baseRows = data.rows.filter((r) => r.fy1Type && fy1Filter.includes(r.fy1Type));
-    } else if (fy2Filter != null) {
-      baseRows = data.rows.filter((r) => r.fy2Type && fy2Filter.includes(r.fy2Type));
+
+      baseRows = [];
+      for (const r of data.rows) {
+        if (fy1Filter != null && !fy1Donors.has(r.account)) continue;
+        if (fy2Filter != null && !fy2Donors.has(r.account)) continue;
+
+        let row = r;
+        if (fy1Filter != null && row.fy1Type && !fy1Filter.includes(row.fy1Type)) row = blankFy1(row);
+        if (fy2Filter != null && row.fy2Type && !fy2Filter.includes(row.fy2Type)) row = blankFy2(row);
+
+        if (!row.fy1Type && !row.fy2Type) continue; // nothing left to show on this row
+        baseRows.push(row);
+      }
     }
 
     let rows = baseRows.filter((r) => {
@@ -733,10 +775,12 @@ export default function EngagementStatusModule() {
                   r.account,
                   r.fy1Amount ?? "",
                   r.fy1Type || "",
-                  r.fy1Month || "",
+                  // Same text the table shows: every distinct month, not
+                  // just the single last-deal month in r.fy1Month.
+                  monthsText(r.fy1Month, r.fy1Deals),
                   r.fy2Amount ?? "",
                   r.fy2Type || "",
-                  r.fy2Month || "",
+                  monthsText(r.fy2Month, r.fy2Deals),
                   r.diffAmount == null ? "" : r.diffAmount > 0 ? "Increase" : r.diffAmount < 0 ? "Decrease" : "No Change",
                   r.diffPct == null ? "" : r.diffPct.toFixed(2),
                   r.diffAmount ?? "",
