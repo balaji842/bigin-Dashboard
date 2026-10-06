@@ -1,31 +1,31 @@
 import { fetchAllRecords } from "../zohoClient.js";
 
-// Every /crm-analysis/* route needs the full Pipelines dataset, but the
-// underlying CRM data doesn't change every time someone clicks a Type
-// pill or switches pages — only when something is actually
-// added/edited in Bigin. Without this cache, EVERY request (including
-// just toggling a filter) re-paginates the entire module from Zoho's
-// API from scratch, which is slow and is the main reason the dashboard
-// feels sluggish. This caches the raw records for a few minutes and
-// lets every route share one copy.
+// Every /crm-analysis/* route needs the full Pipelines dataset. Pulling
+// it from Zoho means paging through every record (slow), so the whole
+// dataset is kept in memory and shared by every route.
+//
+// How a request is served:
+//   - younger than FRESH_MS      -> straight from memory, instant.
+//   - FRESH_MS .. STALE_OK_MS    -> ALSO instant: the slightly old copy is
+//                                   returned right away and a fresh copy is
+//                                   pulled from Zoho in the background, so
+//                                   the person never waits for Zoho and the
+//                                   next request already has newer data.
+//   - older than STALE_OK_MS, or nothing cached yet -> has to wait for Zoho.
+//
+// The first pull also starts as soon as the server boots (see the end of
+// this file) instead of waiting for the first visitor, so after a
+// restart / Render wake-up it overlaps with the server starting up.
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const FRESH_MS = 5 * 60 * 1000; // serve from memory without refreshing
+const STALE_OK_MS = 30 * 60 * 1000; // still serve instantly, refresh behind the scenes
 
 let cached = null;
 let cachedAt = 0;
-let inFlight = null; // dedupes concurrent cold-cache requests into one Zoho call
+let inFlight = null; // one shared Zoho pull, however many requests ask at once
 
-export async function getPipelines({ force = false } = {}) {
-  const now = Date.now();
-  if (!force && cached && now - cachedAt < CACHE_TTL_MS) {
-    return cached;
-  }
-
-  // If a fetch is already in progress (e.g. two dashboard tabs opened
-  // at once, or several routes hit right after a cache expiry), wait
-  // for that one instead of firing a second parallel pull from Zoho.
+function startFetch() {
   if (inFlight) return inFlight;
-
   inFlight = (async () => {
     try {
       const records = await fetchAllRecords("Pipelines");
@@ -36,13 +36,25 @@ export async function getPipelines({ force = false } = {}) {
       inFlight = null;
     }
   })();
-
   return inFlight;
 }
 
-// Called by the "Refresh live data" button so a manual refresh always
-// bypasses the cache and pulls the latest from Zoho, instead of the
-// person having to wait out the TTL.
+export async function getPipelines({ force = false } = {}) {
+  if (!force && cached) {
+    const age = Date.now() - cachedAt;
+    if (age < FRESH_MS) return cached;
+    if (age < STALE_OK_MS) {
+      // Hand back what we have now; refresh for the next request. A
+      // failed background refresh just keeps the old copy for now.
+      startFetch().catch((err) => console.error("[pipelinesCache] background refresh failed:", err.message));
+      return cached;
+    }
+  }
+  return startFetch();
+}
+
+// Called by the "Refresh live data" button route so a manual refresh
+// always bypasses the cache and pulls the latest from Zoho.
 export function invalidatePipelinesCache() {
   cached = null;
   cachedAt = 0;
@@ -51,3 +63,6 @@ export function invalidatePipelinesCache() {
 export function pipelinesCacheInfo() {
   return { cachedAt: cached ? cachedAt : null, count: cached ? cached.length : 0 };
 }
+
+// Warm the cache at startup.
+startFetch().catch((err) => console.error("[pipelinesCache] startup warm-up failed:", err.message));

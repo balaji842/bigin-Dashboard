@@ -34,24 +34,20 @@ const PAGE_TITLES = {
 };
 
 export default function App() {
-  const [loading, setLoading] = useState(true);
+  // Opening the site does NOT force a re-download from Zoho any more —
+  // each page just asks the server for its data, and the server answers
+  // from its in-memory copy (see server/src/lib/pipelinesCache.js). Only
+  // the "Refresh live data" button forces a fresh pull.
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(() => new Date().toLocaleTimeString());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activePage, setActivePage] = useState("crm-overview");
   const [unlocked, setUnlocked] = useState(isUnlocked());
 
-  const loadSummary = () => {
+  const refreshData = () => {
     setLoading(true);
     setError(null);
-    // Refreshes the shared Pipelines cache every /crm-analysis/* route
-    // reads from (see server/src/lib/pipelinesCache.js) — this used to
-    // call a disconnected /analytics/summary endpoint whose result
-    // wasn't shown anywhere and did nothing to speed up the actual
-    // dashboard pages. Now the button (and the initial page load) both
-    // warm the exact cache Overview/Conversion/Pipeline/etc. all share,
-    // so a manual refresh actually pulls fresh data instead of just
-    // wasting a redundant Zoho round-trip.
     api
       .refreshPipelines()
       .then(() => {
@@ -61,10 +57,6 @@ export default function App() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    loadSummary();
-  }, []);
-
   const pageInfo = PAGE_TITLES[activePage] || PAGE_TITLES["crm-overview"];
 
   return (
@@ -73,7 +65,7 @@ export default function App() {
       <div className={`flex w-full ${!unlocked ? "blur-sm pointer-events-none select-none" : ""}`}>
       <Sidebar
         lastUpdated={lastUpdated}
-        onRefresh={loadSummary}
+        onRefresh={refreshData}
         loading={loading}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}

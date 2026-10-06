@@ -690,7 +690,7 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
   try {
     const donors = await getPipelines();
     const closeddonors = donors.filter(isClosed);
-    const standarddonors = donors.filter(isStandardPipeline);
+    const standarddonors = donors.filter(isStandardPipeline).filter(isApprovedOpenPipeline);
     const rows = buildEngagementComparison(closeddonors, standarddonors, fy1, fy2);
 
     res.json({
@@ -749,7 +749,7 @@ router.get("/crm-analysis/kam-comparison", async (req, res) => {
       (!typeList || typeList.includes(pick(d, "Type")));
 
     const closeddonors = donors.filter(isClosed).filter(matchesFilters);
-    const standarddonors = donors.filter(isStandardPipeline).filter(matchesFilters);
+    const standarddonors = donors.filter(isStandardPipeline).filter(isApprovedOpenPipeline).filter(matchesFilters);
 
     const now = new Date();
     const cutoffIndex = fiscalMonthIndex(now);

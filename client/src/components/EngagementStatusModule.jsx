@@ -241,9 +241,78 @@ function monthsText(month, deals) {
   return month || "";
 }
 
-function MonthBreakdown({ month, deals }) {
+// Splits one FY+Type's total amount by month, in the same order the
+// month text is shown (most recent first). Several deals in the same
+// month are added together. A deal with no closing date goes in a
+// "No closing date" line so the lines still add up to the Amount cell.
+function monthSplit(month, deals, amount) {
+  const list = deals && deals.length > 0 ? deals : month ? [{ month, amount }] : [];
+  const order = [];
+  const totals = {};
+  for (const d of list) {
+    const m = d.month || "No closing date";
+    if (!(m in totals)) {
+      totals[m] = 0;
+      order.push(m);
+    }
+    totals[m] += d.amount || 0;
+  }
+  return order.map((m) => ({ month: m, amount: totals[m] }));
+}
+
+// Conversion Month cell. Hovering it opens a small popup with the
+// amount for each month (they add up to the Amount cell next to it).
+// The popup is `fixed` and positioned from the cell's screen position,
+// so the table's horizontal-scroll container can't clip it; it opens
+// below the cell, or above when there isn't room underneath.
+function MonthBreakdown({ month, deals, amount, donorType }) {
+  const [tip, setTip] = useState(null);
   const text = monthsText(month, deals);
-  return text ? <span>{text}</span> : <span className="text-slate-300">—</span>;
+  if (!text) return <span className="text-slate-300">—</span>;
+
+  const split = monthSplit(month, deals, amount);
+  const total = split.reduce((s, x) => s + x.amount, 0);
+
+  const show = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const estHeight = 64 + split.length * 24;
+    const fitsBelow = rect.bottom + estHeight + 12 < window.innerHeight;
+    setTip({
+      left: Math.min(Math.max(rect.left + rect.width / 2, 130), window.innerWidth - 130),
+      top: fitsBelow ? rect.bottom + 6 : undefined,
+      bottom: fitsBelow ? undefined : window.innerHeight - rect.top + 6,
+    });
+  };
+
+  return (
+    <span
+      className="cursor-help underline decoration-dotted decoration-slate-300 underline-offset-4"
+      onMouseEnter={show}
+      onMouseLeave={() => setTip(null)}
+    >
+      {text}
+      {tip && (
+        <span
+          className="fixed z-50 w-60 bg-white rounded-xl border border-slate-200 shadow-lg p-3 text-left normal-case pointer-events-none block no-underline"
+          style={{ left: tip.left, top: tip.top, bottom: tip.bottom, transform: "translateX(-50%)" }}
+        >
+          <span className="block text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">
+            Amount by month
+          </span>
+          {split.map((s) => (
+            <span key={s.month} className="flex items-center justify-between gap-3 text-xs py-0.5">
+              <span className="text-slate-600">{s.month}</span>
+              <span className="font-semibold text-navy-900 whitespace-nowrap">{moneyForDonorType(s.amount, donorType)}</span>
+            </span>
+          ))}
+          <span className="flex items-center justify-between gap-3 text-xs font-bold text-navy-900 border-t border-slate-100 mt-1.5 pt-1.5">
+            <span>Total</span>
+            <span className="whitespace-nowrap">{moneyForDonorType(total, donorType)}</span>
+          </span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 function EngagementPill({ engaged }) {
@@ -304,18 +373,22 @@ export default function EngagementStatusModule() {
   // comparison tables and the KAM-wise Target chart below, so
   // deselecting a Type here removes it from both at once instead of
   // each having its own separate filter. null = every Type combined
-  // (the default). Additive: a pill click selects just that Type
-  // (starting from nothing), not "start from everyone checked and
-  // remove the one clicked" — that inverted version is what silently
-  // blocked target-editing before, since clicking one pill left the
-  // OTHER two active instead of narrowing to one.
+  // (the default, all three pills lit). Same toggle rule as the Type
+  // filter on Overview / Conversion / Pipeline: with everything on,
+  // clicking a pill turns just THAT one off and the others stay on;
+  // clicking an off pill turns it back on; the last remaining pill
+  // can't be turned off, and turning everything back on returns to
+  // null. (Editing a KAM target needs exactly one Type on, so turn
+  // the other two off first.)
   const TYPES = ["Cash", "Kind", "School Engagement"];
   const [selectedTypes, setSelectedTypes] = useState(null);
   const toggleType = (value) => {
     setSelectedTypes((prev) => {
-      const base = prev == null ? [] : prev;
+      const base = prev == null ? TYPES : prev;
       const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
-      return next.length === 0 ? null : next;
+      if (next.length === 0) return prev; // never allow zero selected
+      if (next.length === TYPES.length) return null; // back to "everything"
+      return next;
     });
   };
 
@@ -874,7 +947,7 @@ export default function EngagementStatusModule() {
                       {r.fy1Type || <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center align-middle">
-                      <MonthBreakdown month={r.fy1Month} deals={r.fy1Deals} />
+                      <MonthBreakdown month={r.fy1Month} deals={r.fy1Deals} amount={r.fy1Amount} donorType={r.donorType} />
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
                       <AmountBreakdown amount={r.fy2Amount} donorType={r.donorType} />
@@ -883,7 +956,7 @@ export default function EngagementStatusModule() {
                       {r.fy2Type || <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center align-middle">
-                      <MonthBreakdown month={r.fy2Month} deals={r.fy2Deals} />
+                      <MonthBreakdown month={r.fy2Month} deals={r.fy2Deals} amount={r.fy2Amount} donorType={r.donorType} />
                     </td>
                     <td className="px-3 py-2.5 text-center border-l border-slate-100 whitespace-nowrap align-middle">
                       {r.diffAmount != null ? (
