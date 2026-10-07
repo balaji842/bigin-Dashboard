@@ -5,7 +5,24 @@ import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import ExportButton from "./ExportButton.jsx";
 import { downloadCsv } from "../lib/csvExport.js";
 
-const DEFAULT_FILTERS = { platform: null, kam: null, spoc: null, type: null, donorType: null };
+const DEFAULT_FILTERS = { platform: null, kam: null, spoc: null, type: null, donorType: null, category: null };
+
+// A / B / C donor category — calculated from the donor's FY 2025-2026
+// total (A above ₹1 Cr, B ₹50 L to ₹1 Cr, C below ₹50 L). "—" = the donor
+// gave nothing in that year, so has no category.
+const CATEGORY_STYLES = {
+  A: "bg-emerald-50 text-emerald-700",
+  B: "bg-sky-50 text-sky-700",
+  C: "bg-slate-100 text-slate-600",
+};
+function CategoryBadge({ value }) {
+  if (!value || value === "—") return <span className="text-slate-300">—</span>;
+  return (
+    <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${CATEGORY_STYLES[value] || "bg-slate-100 text-slate-600"}`}>
+      {value}
+    </span>
+  );
+}
 
 // `title` overrides the monthName+fy combo entirely — lets every donor
 // count across the dashboard (KPI cards, FY cards, breakdown-table rows,
@@ -27,6 +44,16 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
 
   const heading = title || `${monthName} ${fy}`;
 
+  // The Category column only appears for lists whose rows carry a
+  // category (the FY Comparison donor lists). Every other page's rows
+  // have none, so this popup looks exactly as before there. A donor with
+  // no category shows as "—", which also makes "—" a pickable filter option.
+  const hasCategory = useMemo(() => donors.some((d) => "category" in d), [donors]);
+  const rows = useMemo(
+    () => (hasCategory ? donors.map((d) => (d.category ? d : { ...d, category: "—" })) : donors),
+    [donors, hasCategory]
+  );
+
   // Fresh filters/sort every time a new drilldown is opened, so a
   // filter left on from the last popup never silently hides everything
   // in this one.
@@ -38,12 +65,20 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
     }
   }, [open, title]);
 
-  const platformOptions = useMemo(() => optionsFor(donors, "platform"), [donors]);
-  const kamOptions = useMemo(() => optionsFor(donors, "kam"), [donors]);
-  const spocOptions = useMemo(() => optionsFor(donors, "spoc"), [donors]);
-  const typeOptions = useMemo(() => optionsFor(donors, "type"), [donors]);
-  const donorTypeOptions = useMemo(() => optionsFor(donors, "donorType"), [donors]);
-  const optionsByField = { platform: platformOptions, kam: kamOptions, spoc: spocOptions, type: typeOptions, donorType: donorTypeOptions };
+  const platformOptions = useMemo(() => optionsFor(rows, "platform"), [rows]);
+  const kamOptions = useMemo(() => optionsFor(rows, "kam"), [rows]);
+  const spocOptions = useMemo(() => optionsFor(rows, "spoc"), [rows]);
+  const typeOptions = useMemo(() => optionsFor(rows, "type"), [rows]);
+  const donorTypeOptions = useMemo(() => optionsFor(rows, "donorType"), [rows]);
+  const categoryOptions = useMemo(() => (hasCategory ? optionsFor(rows, "category") : []), [rows, hasCategory]);
+  const optionsByField = {
+    platform: platformOptions,
+    kam: kamOptions,
+    spoc: spocOptions,
+    type: typeOptions,
+    donorType: donorTypeOptions,
+    category: categoryOptions,
+  };
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPageNoop, optionsByField);
 
   const setSortFor = (column) => (dir) => {
@@ -52,13 +87,14 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
   };
 
   const filtered = useMemo(() => {
-    let out = donors.filter(
+    let out = rows.filter(
       (d) =>
         matchesFilter(d.platform, filters.platform) &&
         matchesFilter(d.kam, filters.kam) &&
         matchesFilter(d.spoc, filters.spoc) &&
         matchesFilter(d.type, filters.type) &&
-        matchesFilter(d.donorType, filters.donorType)
+        matchesFilter(d.donorType, filters.donorType) &&
+        (!hasCategory || matchesFilter(d.category, filters.category))
     );
     if (sortColumn && sortDir) {
       out = [...out].sort((a, b) => {
@@ -69,7 +105,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
       });
     }
     return out;
-  }, [donors, filters, sortColumn, sortDir]);
+  }, [rows, hasCategory, filters, sortColumn, sortDir]);
 
   // Sums whatever's currently shown, so this updates as the column
   // filters narrow the list — same idea as the donor count next to it.
@@ -78,8 +114,18 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
   const handleExport = () => {
     downloadCsv(
       `${heading.replace(/[^\w\- ]+/g, "").trim() || "donor-list"}.csv`,
-      ["#", "Donor", "Amount", "Platform", "KAM", "SPOC", "Donation Type", "Donor Type"],
-      filtered.map((d, i) => [i + 1, d.account, d.amount, d.platform, d.kam, d.spoc, d.type, d.donorType])
+      ["#", "Donor", "Amount", "Platform", "KAM", "SPOC", "Donation Type", "Donor Type", ...(hasCategory ? ["Category"] : [])],
+      filtered.map((d, i) => [
+        i + 1,
+        d.account,
+        d.amount,
+        d.platform,
+        d.kam,
+        d.spoc,
+        d.type,
+        d.donorType,
+        ...(hasCategory ? [d.category === "—" ? "" : d.category] : []),
+      ])
     );
   };
 
@@ -107,7 +153,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
         </div>
         <div className="overflow-y-auto flex-1">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[880px]">
+            <table className={`w-full text-sm ${hasCategory ? "min-w-[960px]" : "min-w-[880px]"}`}>
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100 sticky top-0 bg-white">
                 <th className="px-4 py-2 font-semibold">#</th>
@@ -182,6 +228,19 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
                     onClearAll={clearAll("donorType")}
                   />
                 </th>
+                {hasCategory && (
+                  <th className="px-4 py-2 font-semibold">
+                    <HeaderFilterMenu
+                      variant="light"
+                      label="Category"
+                      options={categoryOptions}
+                      selected={filters.category}
+                      onToggle={toggleOption("category")}
+                      onSelectAll={selectAll("category")}
+                      onClearAll={clearAll("category")}
+                    />
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -195,11 +254,16 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
                   <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.type || "—"}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.donorType || "—"}</td>
+                  {hasCategory && (
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <CategoryBadge value={d.category} />
+                    </td>
+                  )}
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={hasCategory ? 9 : 8} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No donors found for this selection.
                   </td>
                 </tr>

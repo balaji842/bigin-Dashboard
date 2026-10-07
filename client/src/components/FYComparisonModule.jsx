@@ -16,6 +16,11 @@ const TABLE_THEMES = {
   month: { bar: "bg-gradient-to-r from-blue-600 to-indigo-500", icon: IconCalendar },
 };
 
+// Donor Category is calculated, not a CRM field: from the donor's total in
+// FY 2025-2026 — A above ₹1 Cr, B ₹50 L to ₹1 Cr, C below ₹50 L (see
+// buildDonorCategories on the server).
+const CATEGORY_OPTIONS = ["A", "B", "C"];
+
 // Generic multi-select pill filter, reused for Type, KAM, SPOC, and
 // Platform. `selected: null` means "everything" (no restriction, no
 // pills highlighted as excluded); once the person deselects at least
@@ -265,17 +270,38 @@ function ComparisonTable({ title, rows, fy1, fy2, theme }) {
   );
 }
 
-// Month-by-month FY25-26 vs FY26-27 breakdown, replacing the old "By
-// Stage" table and the Standard Pipeline card. Months in FY2 that are
-// still in the future (haven't happened yet this fiscal year) show "—"
-// in the Difference column instead of a misleading -100%.
-// Difference cells are clickable (when diffPct isn't null — i.e. the
-// month has actually happened in both years) and open the donor-level
-// 4-bucket breakdown modal for that month via onDiffClick. Donors count
-// cells are always clickable (when > 0) and open a simple donor list for
-// that one FY+month via onDonorCountClick.
-function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
+// Month-by-month FY25-26 vs FY26-27 breakdown, in three column groups:
+//   FY {fy1}    Amount, Donors
+//   FY {fy2}    Amount, Donors
+//   Comparison  Engaged Donors, Not Engaged Donors, Difference
+// The two FY groups follow the Platform filter (P1 / P2 as selected; with
+// P3, last year shows every platform and this year shows P3 — see
+// lastYearPlatforms on the server). The Comparison group ignores the
+// Platform filter. Months in FY2 that are still in the future show "—"
+// in Difference instead of a misleading -100%.
+//
+// Click targets:
+//   - a Donors count (either year)  -> simple donor list for that FY+month
+//   - Engaged Donors count          -> just the Engaged Donors table
+//     (Engaged / Not Engaged show "—" for months that haven't happened yet)
+//   - Not Engaged Donors count      -> just the Not Engaged Donors table
+//   - Difference (once the month has happened in both years) -> every table
+function MonthlyTable({ rows, fy1, fy2, onBreakdownClick, onDonorCountClick }) {
   const { bar, icon: Icon } = TABLE_THEMES.month;
+
+  const donorsCell = (count, fy, month) =>
+    count > 0 ? (
+      <button
+        type="button"
+        onClick={() => onDonorCountClick(fy, month)}
+        className="text-navy-700 font-semibold hover:underline cursor-pointer w-full text-right"
+      >
+        {count}
+      </button>
+    ) : (
+      <span className="text-slate-400">{count}</span>
+    );
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
       <div className={`${bar} text-white px-4 sm:px-5 py-3 flex items-center gap-2`}>
@@ -283,24 +309,32 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
         <p className="font-display font-semibold text-sm">By Month</p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[820px]">
+        <table className="w-full text-sm min-w-[980px]">
           <thead>
             <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
               <th rowSpan={2} className="px-4 py-2 font-semibold text-left align-bottom">Month</th>
               <th colSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy1}</th>
-              <th colSpan={3} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy2}</th>
-              <th rowSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100 align-bottom">Difference</th>
+              <th colSpan={2} className="px-4 py-2 font-semibold border-l border-slate-100">FY {fy2}</th>
+              <th colSpan={3} className="px-4 py-2 font-semibold border-l border-slate-100">Comparison</th>
             </tr>
             <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
               <th className="px-4 py-1.5 font-medium border-l border-slate-100">Amount</th>
               <th className="px-4 py-1.5 font-medium">Donors</th>
               <th className="px-4 py-1.5 font-medium border-l border-slate-100">Amount</th>
-              <th className="px-4 py-1.5 font-medium" title="FY 2025-2026 donors who gave again in FY 2026-2027 (any month)">
-                Matching Donors
+              <th className="px-4 py-1.5 font-medium">Donors</th>
+              <th
+                className="px-4 py-1.5 font-medium border-l border-slate-100"
+                title="FY 2025-2026 donors who gave again in FY 2026-2027 (any month, any platform)"
+              >
+                Engaged Donors
               </th>
-              <th className="px-4 py-1.5 font-medium" title="FY 2025-2026 donors who haven't given at all in FY 2026-2027 yet">
-                Missing Donors
+              <th
+                className="px-4 py-1.5 font-medium"
+                title="FY 2025-2026 donors who haven't given at all in FY 2026-2027 yet (any platform)"
+              >
+                Not Engaged Donors
               </th>
+              <th className="px-4 py-1.5 font-medium">Difference</th>
             </tr>
           </thead>
           <tbody>
@@ -308,27 +342,18 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
               <tr key={r.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                 <td className="px-4 py-2 text-navy-900 font-medium whitespace-nowrap">{r.name}</td>
                 <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{moneyCr(r.amountA)}</td>
-                <td className="px-4 py-2 text-right border-l-0">
-                  {r.donorsA > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => onDonorCountClick(fy1, r.name)}
-                      className="text-navy-700 font-semibold hover:underline cursor-pointer w-full text-right"
-                    >
-                      {r.donorsA}
-                    </button>
-                  ) : (
-                    <span className="text-slate-400">{r.donorsA}</span>
-                  )}
-                </td>
+                <td className="px-4 py-2 text-right">{donorsCell(r.donorsA, fy1, r.name)}</td>
                 <td className="px-4 py-2 text-right text-slate-600 border-l border-slate-100">{moneyCr(r.amountB)}</td>
-                <td className="px-4 py-2 text-right">
-                  {r.matchingDonors > 0 ? (
+                <td className="px-4 py-2 text-right">{donorsCell(r.donorsB, fy2, r.name)}</td>
+                <td className="px-4 py-2 text-right border-l border-slate-100">
+                  {r.matchingDonors == null ? (
+                    <span className="text-slate-300">—</span>
+                  ) : r.matchingDonors > 0 ? (
                     <button
                       type="button"
-                      onClick={() => onDiffClick(r.name)}
+                      onClick={() => onBreakdownClick(r.name, "matching")}
                       className="text-emerald-600 font-semibold hover:underline cursor-pointer w-full text-right"
-                      title={`See the ${r.matchingDonors} matching donor(s) for ${r.name}`}
+                      title={`See the ${r.matchingDonors} engaged donor(s) for ${r.name}`}
                     >
                       {r.matchingDonors}
                     </button>
@@ -337,12 +362,14 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
                   )}
                 </td>
                 <td className="px-4 py-2 text-right">
-                  {r.missingDonors > 0 ? (
+                  {r.missingDonors == null ? (
+                    <span className="text-slate-300">—</span>
+                  ) : r.missingDonors > 0 ? (
                     <button
                       type="button"
-                      onClick={() => onDiffClick(r.name)}
+                      onClick={() => onBreakdownClick(r.name, "missing")}
                       className="text-red-500 font-semibold hover:underline cursor-pointer w-full text-right"
-                      title={`See the ${r.missingDonors} missing donor(s) for ${r.name}`}
+                      title={`See the ${r.missingDonors} not engaged donor(s) for ${r.name}`}
                     >
                       {r.missingDonors}
                     </button>
@@ -350,13 +377,13 @@ function MonthlyTable({ rows, fy1, fy2, onDiffClick, onDonorCountClick }) {
                     <span className="text-slate-400">{r.missingDonors}</span>
                   )}
                 </td>
-                <td className="px-4 py-2 text-right border-l border-slate-100 whitespace-nowrap">
+                <td className="px-4 py-2 text-right whitespace-nowrap">
                   {r.diffPct == null ? (
                     <span className="text-slate-300">—</span>
                   ) : (
                     <button
                       type="button"
-                      onClick={() => onDiffClick(r.name)}
+                      onClick={() => onBreakdownClick(r.name, "difference")}
                       className={`font-semibold hover:underline cursor-pointer ${r.diffPct >= 0 ? "text-emerald-600" : "text-red-500"}`}
                     >
                       {r.diffPct >= 0 ? "▲" : "▼"} {Math.abs(r.diffPct).toFixed(1)}%{" "}
@@ -381,7 +408,7 @@ export default function FYComparisonModule() {
   const fy2 = "2026-2027";
 
   // Filter option lists (distinct values across all donors), fetched once.
-  const [filterOptions, setFilterOptions] = useState({ types: [], kams: [], spocs: [], platforms: [] });
+  const [filterOptions, setFilterOptions] = useState({ types: [], kams: [], spocs: [], platforms: [], donorTypes: [] });
 
   // Each filter is either null ("everything") or an explicit array of
   // the values still selected. Toggling down to zero is blocked; toggling
@@ -390,6 +417,8 @@ export default function FYComparisonModule() {
   const [selectedKams, setSelectedKams] = useState(null);
   const [selectedSpocs, setSelectedSpocs] = useState(null);
   const [selectedPlatforms, setSelectedPlatforms] = useState(null);
+  const [selectedDonorTypes, setSelectedDonorTypes] = useState(null);
+  const [selectedCategories, setSelectedCategories] = useState(null);
 
   const toggleIn = (setter, allOptions) => (value) => {
     setter((current) => {
@@ -404,6 +433,8 @@ export default function FYComparisonModule() {
   const toggleKam = toggleIn(setSelectedKams, filterOptions.kams);
   const toggleSpoc = toggleIn(setSelectedSpocs, filterOptions.spocs);
   const togglePlatform = toggleIn(setSelectedPlatforms, filterOptions.platforms);
+  const toggleDonorType = toggleIn(setSelectedDonorTypes, filterOptions.donorTypes);
+  const toggleCategory = toggleIn(setSelectedCategories, CATEGORY_OPTIONS);
   const buildFilterParams = () => {
     const params = new URLSearchParams({ fy1, fy2 });
     // An empty array (from "Clear all") means "match nothing" — join()
@@ -420,17 +451,24 @@ export default function FYComparisonModule() {
     setListParam("kams", selectedKams);
     setListParam("spocs", selectedSpocs);
     setListParam("platforms", selectedPlatforms);
+    setListParam("donorTypes", selectedDonorTypes);
+    setListParam("categories", selectedCategories);
     return params;
   };
 
-  // Donor breakdown modal for a clicked month's Difference cell.
+  // Donor breakdown modal, opened from a month's Engaged Donors count,
+  // Not Engaged Donors count, or Difference cell. `modalView` says which
+  // of those it was ("matching" | "missing" | "difference") so the popup
+  // only shows the table(s) that were asked for.
   const [modalMonth, setModalMonth] = useState(null);
+  const [modalView, setModalView] = useState("difference");
   const [modalData, setModalData] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState(null);
 
-  const openMonthModal = (monthName) => {
+  const openMonthModal = (monthName, view = "difference") => {
     setModalMonth(monthName);
+    setModalView(view);
     setModalData(null);
     setModalError(null);
     setModalLoading(true);
@@ -484,32 +522,56 @@ export default function FYComparisonModule() {
   }, []);
 
   useEffect(() => {
+    // Each filter change starts a new request. If the filters change again
+    // before it finishes, this one is cancelled (and its result ignored)
+    // so a slow earlier response can never overwrite a newer one.
+    const controller = new AbortController();
+    let cancelled = false;
     setLoading(true);
     setError(null);
     const params = buildFilterParams();
-    fetch(`/api/crm-analysis/fy-comparison?${params.toString()}`)
+    fetch(`/api/crm-analysis/fy-comparison?${params.toString()}`, { signal: controller.signal })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [selectedTypes, selectedKams, selectedSpocs, selectedPlatforms]);
+      .then((json) => {
+        if (!cancelled) setData(json);
+      })
+      .catch((e) => {
+        if (!cancelled && e.name !== "AbortError") setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [selectedTypes, selectedKams, selectedSpocs, selectedPlatforms, selectedDonorTypes, selectedCategories]);
 
   const hasActiveFilters =
-    selectedTypes != null || selectedKams != null || selectedSpocs != null || selectedPlatforms != null;
+    selectedTypes != null ||
+    selectedKams != null ||
+    selectedSpocs != null ||
+    selectedPlatforms != null ||
+    selectedDonorTypes != null ||
+    selectedCategories != null;
   const clearAllFilters = () => {
     setSelectedTypes(null);
     setSelectedKams(null);
     setSelectedSpocs(null);
     setSelectedPlatforms(null);
+    setSelectedDonorTypes(null);
+    setSelectedCategories(null);
   };
   const filterSummary = [
     selectedTypes != null ? `Type: ${selectedTypes.length ? selectedTypes.join(", ") : "none"}` : null,
     selectedKams != null ? `KAM: ${selectedKams.length ? selectedKams.join(", ") : "none"}` : null,
     selectedSpocs != null ? `SPOC: ${selectedSpocs.length ? selectedSpocs.join(", ") : "none"}` : null,
     selectedPlatforms != null ? `Platform: ${selectedPlatforms.length ? selectedPlatforms.join(", ") : "none"}` : null,
+    selectedDonorTypes != null ? `Donor Type: ${selectedDonorTypes.length ? selectedDonorTypes.join(", ") : "none"}` : null,
+    selectedCategories != null ? `Category: ${selectedCategories.length ? selectedCategories.join(", ") : "none"}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -542,7 +604,31 @@ export default function FYComparisonModule() {
           onSelectAll={() => setSelectedPlatforms(null)}
           onClearAll={() => setSelectedPlatforms([])}
         />
+        <MultiSelectDropdown
+          label="Donor Type"
+          options={filterOptions.donorTypes}
+          selected={selectedDonorTypes}
+          onToggle={toggleDonorType}
+          onSelectAll={() => setSelectedDonorTypes(null)}
+          onClearAll={() => setSelectedDonorTypes([])}
+        />
+        <MultiSelectDropdown
+          label="Category"
+          options={CATEGORY_OPTIONS}
+          selected={selectedCategories}
+          onToggle={toggleCategory}
+          onSelectAll={() => setSelectedCategories(null)}
+          onClearAll={() => setSelectedCategories([])}
+        />
       </div>
+      {/* <p className="text-[11px] text-slate-400 mt-2.5">
+        Category is based on the donor's FY 2025-2026 total: A above ₹1 Cr · B ₹50 L to ₹1 Cr · C below ₹50 L.
+        Donors with no FY 2025-2026 giving have no category.
+      </p>
+      <p className="text-[11px] text-slate-400 mt-1">
+        Platform: P1 and P2 filter both years. P3 shows last year's P1, P2 and P3 together against this year's P3.
+        In the By Month table, the Comparison columns (Engaged, Not Engaged, Difference) ignore the Platform filter.
+      </p> */}
     </div>
   );
 
@@ -572,12 +658,22 @@ export default function FYComparisonModule() {
 
   const conv = data.conversion || {};
   const monthLabel = conv.currentMonthLabel || "";
+  // True while a filter change is loading and the previous numbers are
+  // still on screen — they're dimmed (and a bar shows) so it's clear the
+  // page is updating rather than frozen.
+  const refreshing = loading;
 
   return (
     <div className="space-y-5 sm:space-y-6">
       <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
       {filterBar}
 
+      {refreshing && <div className="h-1 -mt-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 animate-pulse" />}
+
+      <div
+        aria-busy={refreshing}
+        className={`space-y-5 sm:space-y-6 transition-opacity ${refreshing ? "opacity-50 pointer-events-none" : ""}`}
+      >
       <div>
         <div className="flex items-center gap-2 mb-3">
           <span className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
@@ -639,7 +735,7 @@ export default function FYComparisonModule() {
         rows={data.byMonth}
         fy1={data.fy1}
         fy2={data.fy2}
-        onDiffClick={openMonthModal}
+        onBreakdownClick={openMonthModal}
         onDonorCountClick={openDonorListModal}
       />
 
@@ -649,11 +745,17 @@ export default function FYComparisonModule() {
         <ComparisonTable title="By KAM" rows={data.byKAM} fy1={data.fy1} fy2={data.fy2} theme="kam" />
         <ComparisonTable title="By Platform" rows={data.byPlatform} fy1={data.fy1} fy2={data.fy2} theme="platform" />
       </div>
+      </div>
 
+      {/* Keyed by month + view so each time the popup is opened it starts
+          with clean filters/sorting instead of carrying over whatever was
+          set in the previous one. */}
       <MonthDonorBreakdownModal
+        key={`${modalMonth}-${modalView}`}
         open={modalMonth != null}
         onClose={() => setModalMonth(null)}
         monthName={modalMonth}
+        view={modalView}
         fy1={data.fy1}
         fy2={data.fy2}
         loading={modalLoading}

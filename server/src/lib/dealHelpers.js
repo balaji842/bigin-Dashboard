@@ -114,6 +114,15 @@ export function crossTabByFiscalYear(donors, field) {
   );
 }
 
+// Month names by JS month number (0 = January). A plain lookup: formatting
+// a date with toLocaleString() for every deal was the slowest part of the
+// FY Comparison page (tens of thousands of calls per request). Same names,
+// same local-time month as before.
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 const FY_MONTH_ORDER = [
   "April", "May", "June", "July", "August", "September",
   "October", "November", "December", "January", "February", "March",
@@ -130,7 +139,7 @@ export function monthWiseSummary(donors, dateField = "Closing_Date") {
     if (!raw) continue;
     const date = new Date(raw);
     if (isNaN(date)) continue;
-    const monthName = date.toLocaleString("en-US", { month: "long" });
+    const monthName = MONTH_NAMES[date.getMonth()];
     if (!byMonth[monthName]) byMonth[monthName] = { amount: 0, donorKeys: new Set() };
     byMonth[monthName].amount += pickNumber(d, "Amount");
     const donorKey = uniqueDonorKey(d);
@@ -191,7 +200,95 @@ export function ytdTotals(donors, dateField, cutoffFiscalIndex) {
 export function monthNameOf(closingDate) {
   if (!closingDate) return null;
   const d = new Date(closingDate);
-  return isNaN(d) ? null : d.toLocaleString("en-US", { month: "long" });
+  return isNaN(d) ? null : MONTH_NAMES[d.getMonth()];
+}
+
+// Engaged / Not Engaged donor COUNTS for every month at once, in a single
+// pass over the deals. Gives exactly the same numbers as calling
+// buildMonthDonorBreakdown() once per month and reading
+// matching.donorCount / missing.donorCount — but that rebuilt the whole
+// donor grouping for each of the 12 months, which was most of the time
+// spent loading the By Month table.
+//   - engaged:     gave in that month in fy1 AND gave anything in fy2
+//   - not engaged: gave in that month in fy1 and nothing at all in fy2
+// Returns { April: { matching, missing }, May: { ... }, ... }.
+export function buildMonthEngagementCounts(donors, fy1, fy2) {
+  const byDonor = new Map(); // donor key -> { fy1Months: Set, fy2Any: boolean }
+  for (const d of donors) {
+    const key = uniqueDonorKey(d);
+    if (!key) continue;
+    const fy = pick(d, "Fiscal_year", "Unspecified");
+    if (fy !== fy1 && fy !== fy2) continue;
+    let info = byDonor.get(key);
+    if (!info) {
+      info = { fy1Months: new Set(), fy2Any: false };
+      byDonor.set(key, info);
+    }
+    if (fy === fy2) info.fy2Any = true;
+    if (fy === fy1) {
+      const m = monthNameOf(d.Closing_Date);
+      if (m) info.fy1Months.add(m);
+    }
+  }
+
+  const counts = {};
+  for (const m of FY_MONTH_ORDER) counts[m] = { matching: 0, missing: 0 };
+  for (const info of byDonor.values()) {
+    for (const m of info.fy1Months) {
+      if (info.fy2Any) counts[m].matching++;
+      else counts[m].missing++;
+    }
+  }
+  return counts;
+}
+
+// ---------------------------------------------------------------------
+// Donor Category (A / B / C) — NOT a CRM field; calculated here.
+//
+// A donor's category comes from their TOTAL closed amount in the basis
+// fiscal year (FY 2025-2026), added up across every deal, Type, KAM and
+// Platform — deliberately NOT narrowed by whatever filters are active on
+// screen, so a donor keeps the same category however the page is
+// filtered:
+//   A  = more than ₹1 Cr
+//   B  = ₹50 L up to and including ₹1 Cr
+//   C  = under ₹50 L
+// A donor who gave nothing in the basis year has no total to classify,
+// so they get no category (null) rather than being called "C".
+// ---------------------------------------------------------------------
+export const CATEGORY_BASIS_FY = "2025-2026";
+export const CATEGORY_A_ABOVE = 10000000; // ₹1 Cr
+export const CATEGORY_B_FROM = 5000000; // ₹50 L
+
+export function categoryForAmount(total) {
+  if (!(total > 0)) return null;
+  if (total > CATEGORY_A_ABOVE) return "A";
+  if (total >= CATEGORY_B_FROM) return "B";
+  return "C";
+}
+
+// donor key (as a string) -> "A" | "B" | "C". Pass it ALL closed deals,
+// not a filtered list (see above).
+export function buildDonorCategories(closedDonors, basisFY = CATEGORY_BASIS_FY) {
+  const totals = new Map();
+  for (const d of closedDonors) {
+    if (pick(d, "Fiscal_year", "") !== basisFY) continue;
+    const key = uniqueDonorKey(d);
+    if (!key) continue;
+    const k = String(key);
+    totals.set(k, (totals.get(k) || 0) + pickNumber(d, "Amount"));
+  }
+  const out = new Map();
+  for (const [k, total] of totals) {
+    const c = categoryForAmount(total);
+    if (c) out.set(k, c);
+  }
+  return out;
+}
+
+export function donorCategory(categoryMap, donorKey) {
+  if (!categoryMap || donorKey == null) return null;
+  return categoryMap.get(String(donorKey)) || null;
 }
 
 // Builds the 5-way donor breakdown (Matching / Missing / Returning
@@ -211,7 +308,7 @@ export function monthNameOf(closingDate) {
 //   - past:      gave in fy2's clicked month, nothing in fy1, but DID
 //                give in some earlier fiscal year (a lapsed donor
 //                returning)
-export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
+export function buildMonthDonorBreakdown(donors, fy1, fy2, month, categoryMap = null) {
   const byDonor = {}; // donorKey -> { account, byFY: { [fiscalYear]: [entry, ...] } }
 
   for (const d of donors) {
@@ -239,6 +336,25 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
     return { amount, type, month: monthLabel, kam: last.kam, platform: last.platform, spoc: last.spoc };
   }
 
+  // Amount per month for a donor's entries, in the same first-seen order
+  // as the month label produced by aggregate() — so a hover popup can
+  // show how the total splits across those months. Gifts in the same
+  // month are added together; an entry with no closing date goes under
+  // "No closing date" so the lines still add up to the total.
+  function monthSplitOf(entries) {
+    const order = [];
+    const totals = {};
+    for (const e of entries) {
+      const m = e.month || "No closing date";
+      if (!(m in totals)) {
+        totals[m] = 0;
+        order.push(m);
+      }
+      totals[m] += e.amount;
+    }
+    return order.map((m) => ({ month: m, amount: totals[m] }));
+  }
+
   function priorYearsLabel(byFY) {
     return Object.entries(byFY)
       .filter(([fy]) => fy !== fy1 && fy !== fy2)
@@ -256,7 +372,8 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
   const trulyNew = [];
   const past = [];
 
-  for (const info of Object.values(byDonor)) {
+  for (const [donorKey, info] of Object.entries(byDonor)) {
+    const category = donorCategory(categoryMap, donorKey);
     const fy1All = info.byFY[fy1] || [];
     const fy2All = info.byFY[fy2] || [];
     const fy1Month = fy1All.filter((e) => e.month === month);
@@ -287,12 +404,14 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
       const diffPct = a1.amount > 0 ? (diffAmount / a1.amount) * 100 : a2.amount > 0 ? 100 : null;
       matching.push({
         account: info.account,
+        category,
         fy1Amount: a1.amount,
         fy1Type: a1.type,
         fy1Month: a1.month,
         fy2Amount: a2.amount,
         fy2Type: a2.type,
         fy2Month: a2.month,
+        fy2MonthSplit: monthSplitOf(fy2All),
         diffAmount,
         diffPct,
         kam: a2.kam,
@@ -302,6 +421,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
       const a1 = aggregate(fy1Month);
       missing.push({
         account: info.account,
+        category,
         fy1Amount: a1.amount,
         fy1Type: a1.type,
         kam: a1.kam,
@@ -315,6 +435,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
         const a1 = aggregate(fy1All);
         returning.push({
           account: info.account,
+          category,
           fy1Amount: a1.amount,
           fy1Type: a1.type,
           fy1Month: a1.month,
@@ -328,6 +449,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
         // Lapsed donor returning after a gap of one or more years.
         past.push({
           account: info.account,
+          category,
           priorSummary: priorYearsLabel(info.byFY),
           fy2Amount: a2.amount,
           fy2Type: a2.type,
@@ -340,6 +462,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
         // earlier fiscal year either.
         trulyNew.push({
           account: info.account,
+          category,
           fy2Amount: a2.amount,
           fy2Type: a2.type,
           platform: a2.platform,
@@ -367,7 +490,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month) {
 // same donor+type did in fy2. "Engaged" means the donor has ANY closed
 // deal in fy2 (any type) — a donor can be "Engaged" overall while still
 // showing "-" on a specific type row they didn't repeat.
-export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
+export function buildEngagementComparison(donors, standarddonors, fy1, fy2, categoryMap = null) {
   const byDonor = {}; // donorKey -> { account, byFY: { [fy]: { [type]: {amount, deals, kam, platform, spoc, donorType} } } }
 
   for (const d of donors) {
@@ -395,7 +518,6 @@ export function buildEngagementComparison(donors, standarddonors, fy1, fy2) {
     bucket.platform = pick(d, "Platform");
     bucket.spoc = pick(d, "Spoc");
     bucket.donorType = pick(d, "Type_of_donor");
-    bucket.category = pick(d, "Category");
     // Last deal's closing month wins too, same "most recent" proxy as
     // kam/platform/spoc/donorType above — kept for filtering/sorting on
     // this column; the full per-deal breakdown lives in bucket.deals.
@@ -481,8 +603,10 @@ function sortDealsDesc(deals) {
         spoc: rep.spoc,
         kam: rep.kam,
         donorType: rep.donorType,
-        // Category is its own field on the deal (A/B/C), separate from KAM.
-        category: rep.category,
+        // A / B / C — calculated from the donor's FY 2025-2026 total (see
+        // buildDonorCategories), NOT the CRM's own Category field. null =
+        // the donor gave nothing in that year, so has no category.
+        category: donorCategory(categoryMap, donorKey),
       });
     }
   }

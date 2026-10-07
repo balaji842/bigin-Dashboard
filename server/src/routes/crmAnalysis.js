@@ -19,6 +19,9 @@ import {
   buildTypePlatformBreakdown,
   STANDARD_TYPES,
   isApprovedOpenPipeline,
+  buildDonorCategories,
+  donorCategory,
+  buildMonthEngagementCounts,
 } from "../lib/dealHelpers.js";
 import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
@@ -29,15 +32,72 @@ function parseListParam(raw) {
   return raw ? raw.split(",").map((t) => t.trim()).filter(Boolean) : null;
 }
 
-// Applies the Type/KAM/SPOC/Platform multi-select filters (any of which
-// may be null = not filtering on that field) to a list of donors.
-function applyFilters(donors, { types, kams, spocs, platforms }) {
+// Applies the Type/KAM/SPOC/Platform/Donor Type/Category multi-select
+// filters (any of which may be null = not filtering on that field) to a
+// list of donors.
+//
+// Category isn't a CRM field — it's the calculated A/B/C from
+// buildDonorCategories (the donor's FY 2025-2026 total), so filtering by
+// it needs that map. A donor with no category (gave nothing in the basis
+// year) is left out whenever a Category filter is active.
+function applyFilters(donors, { types, kams, spocs, platforms, donorTypes, categories }, categoryMap = null) {
   let out = donors;
   if (types && types.length > 0) out = out.filter((d) => types.includes(pick(d, "Type")));
   if (kams && kams.length > 0) out = out.filter((d) => kams.includes(pick(d, "Pipeline_KAM")));
   if (spocs && spocs.length > 0) out = out.filter((d) => spocs.includes(pick(d, "Spoc")));
   if (platforms && platforms.length > 0) out = out.filter((d) => platforms.includes(pick(d, "Platform")));
+  if (donorTypes && donorTypes.length > 0) out = out.filter((d) => donorTypes.includes(pick(d, "Type_of_donor")));
+  if (categories && categories.length > 0) {
+    out = out.filter((d) => {
+      const c = donorCategory(categoryMap, uniqueDonorKey(d));
+      return c != null && categories.includes(c);
+    });
+  }
   return out;
+}
+
+// The FY Comparison page's filter bar, read off the query string. Any
+// filter left out (no query param) means "no restriction" on that field.
+function parseFyComparisonFilters(query) {
+  return {
+    types: parseListParam(query.types),
+    kams: parseListParam(query.kams),
+    spocs: parseListParam(query.spocs),
+    platforms: parseListParam(query.platforms),
+    donorTypes: parseListParam(query.donorTypes),
+    categories: parseListParam(query.categories),
+  };
+}
+
+// Platform filter, last year vs this year (FY Comparison page).
+//   - P1 / P2 selected: both years are filtered to that platform.
+//   - P3 selected: last year's P1, P2 and P3 all count as P3, so last
+//     year is NOT narrowed by platform at all (every platform's deals
+//     show), while this year is narrowed to the selected platform(s).
+// Returns the platform list to apply to LAST YEAR's deals (null = no
+// platform filtering). This year always uses the list as selected.
+function lastYearPlatforms(platforms) {
+  if (!platforms || platforms.length === 0) return null;
+  return platforms.includes("P3") ? null : platforms;
+}
+
+// The closed / open split and the donor category map only depend on the
+// data snapshot, not on the filters — so compute them once per snapshot
+// (getPipelines() hands back the same array until the next refresh)
+// instead of on every request.
+const snapshotViews = new WeakMap();
+function datasetViews(donors) {
+  let views = snapshotViews.get(donors);
+  if (!views) {
+    const closed = donors.filter(isClosed);
+    views = {
+      closed,
+      standard: donors.filter(isStandardPipeline),
+      categoryMap: buildDonorCategories(closed),
+    };
+    snapshotViews.set(donors, views);
+  }
+  return views;
 }
 
 const router = Router();
@@ -389,22 +449,41 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
   // "Cash,Kind" or "Prakash,Rajesh". Any filter left out (no query
   // param) means "no restriction" on that field. Every card/table
   // downstream is computed only from donors matching all supplied filters.
-  const filters = {
-    types: parseListParam(req.query.types),
-    kams: parseListParam(req.query.kams),
-    spocs: parseListParam(req.query.spocs),
-    platforms: parseListParam(req.query.platforms),
-  };
+  const filters = parseFyComparisonFilters(req.query);
 
   try {
     const donors = await getPipelines();
-    const closeddonors = applyFilters(donors.filter(isClosed), filters);
-    const standarddonors = applyFilters(donors.filter(isStandardPipeline), filters);
+    // Category comes from ALL closed deals (not the filtered list), so a
+    // donor's A/B/C never changes with the other filters.
+    const { closed: allClosed, standard: allStandard, categoryMap } = datasetViews(donors);
 
-    const closedFY1 = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy1);
-    const closedFY2 = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy2);
-    const standardFY1 = standarddonors.filter((d) => pick(d, "Fiscal_year", "") === fy1);
-    const standardFY2 = standarddonors.filter((d) => pick(d, "Fiscal_year", "") === fy2);
+    // Platform is applied differently to each part of the page:
+    //   - FY columns / cards / breakdown tables, LAST year: platform rule
+    //     for last year (P3 = everything, see lastYearPlatforms)
+    //   - FY columns / cards / breakdown tables, THIS year: platform as
+    //     selected
+    //   - Comparison (Engaged / Not Engaged / Difference): Platform is
+    //     ignored completely; every other filter still applies
+    const lastYearFilters = { ...filters, platforms: lastYearPlatforms(filters.platforms) };
+    const comparisonFilters = { ...filters, platforms: null };
+
+    const closedFY1 = applyFilters(allClosed, lastYearFilters, categoryMap).filter(
+      (d) => pick(d, "Fiscal_year", "") === fy1
+    );
+    const closedFY2 = applyFilters(allClosed, filters, categoryMap).filter(
+      (d) => pick(d, "Fiscal_year", "") === fy2
+    );
+    const standardFY1 = applyFilters(allStandard, lastYearFilters, categoryMap).filter(
+      (d) => pick(d, "Fiscal_year", "") === fy1
+    );
+    const standardFY2 = applyFilters(allStandard, filters, categoryMap).filter(
+      (d) => pick(d, "Fiscal_year", "") === fy2
+    );
+
+    // Comparison scope: all platforms.
+    const closedCompare = applyFilters(allClosed, comparisonFilters, categoryMap);
+    const closedCompareFY1 = closedCompare.filter((d) => pick(d, "Fiscal_year", "") === fy1);
+    const closedCompareFY2 = closedCompare.filter((d) => pick(d, "Fiscal_year", "") === fy2);
 
     const closedTotalsA = totalsFor(closedFY1);
     const closedTotalsB = totalsFor(closedFY2);
@@ -437,29 +516,45 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
     // UI shows "—" (and isn't clickable) instead of a misleading -100%.
     const monthWiseFY1 = monthWiseSummary(closedFY1, "Closing_Date");
     const monthWiseFY2 = monthWiseSummary(closedFY2, "Closing_Date");
+    // Same months, but over the all-platform comparison scope — used only
+    // for the Difference column.
+    const compareMonthFY1 = monthWiseSummary(closedCompareFY1, "Closing_Date");
+    const compareMonthFY2 = monthWiseSummary(closedCompareFY2, "Closing_Date");
+    // Engaged / Not Engaged counts for every month, in one pass.
+    const engagementCounts = buildMonthEngagementCounts(closedCompare, fy1, fy2);
     const byMonth = monthWiseFY1.map((m1, i) => {
       const m2 = monthWiseFY2[i];
+      const c1 = compareMonthFY1[i];
+      const c2 = compareMonthFY2[i];
       const isFuture = i > cutoffIndex;
+      // Difference belongs to the Comparison group, so it ignores the
+      // Platform filter (it's c2 - c1, not the m2 - m1 shown in the FY
+      // columns).
       let diffPct = null;
       let diffAmount = null;
       if (!isFuture) {
-        diffAmount = m2.amount - m1.amount;
+        diffAmount = c2.amount - c1.amount;
         diffPct =
-          m1.amount > 0 ? (diffAmount / m1.amount) * 100 : m2.amount > 0 ? 100 : null;
+          c1.amount > 0 ? (diffAmount / c1.amount) * 100 : c2.amount > 0 ? 100 : null;
       }
-      // Same Matching/Missing donor buckets shown in the "Difference"
-      // popup for this month — surfaced here too as their own columns
-      // (replacing a flat FY2 "Donors" count) so the retention picture
-      // is visible without opening that popup for every single month.
-      const breakdown = buildMonthDonorBreakdown(closeddonors, fy1, fy2, m1.name);
+      // Engaged / Not Engaged donor counts for this month (the same
+      // buckets the popups list), over the all-platform comparison scope.
+      // A month that hasn't happened yet this fiscal year has no engaged
+      // or not engaged donors, so both stay null (the table shows "—").
+      let matchingDonors = null;
+      let missingDonors = null;
+      if (!isFuture) {
+        matchingDonors = engagementCounts[m1.name].matching;
+        missingDonors = engagementCounts[m1.name].missing;
+      }
       return {
         name: m1.name,
         amountA: m1.amount,
         donorsA: m1.donors,
         amountB: m2.amount,
         donorsB: m2.donors,
-        matchingDonors: breakdown.matching.donorCount,
-        missingDonors: breakdown.missing.donorCount,
+        matchingDonors,
+        missingDonors,
         diffPct,
         diffAmount,
       };
@@ -541,14 +636,19 @@ router.get("/crm-analysis/fy-comparison", async (req, res) => {
 
 // GET /api/crm-analysis/fy-comparison/month-donors?fy1=2025-2026&fy2=2026-2027&month=August&types=Cash,Kind
 //
-// Donor-level drilldown for one month's Difference cell in the By Month
-// table. Buckets every donor active around that month into 4 groups:
-//   - matching: gave in this month in both fy1 and fy2
-//   - missing:  gave in this month in fy1, gave nothing anywhere in fy2 (to date)
-//   - new:      gave in this month in fy2, and either gave in fy1 in a
-//               different month (timing shift) or has no prior history at all
-//   - past:     gave in this month in fy2, nothing in fy1 at all, but did
-//               give in some earlier fiscal year (a lapsed donor returning)
+// Donor-level drilldown for one month's Engaged / Not Engaged / Difference
+// cells in the By Month table. Buckets every donor active around that
+// month into 5 groups (see buildMonthDonorBreakdown in dealHelpers.js):
+//   - matching:  (shown as "Engaged Donors") gave in this month in fy1
+//                and gave again somewhere in fy2
+//   - missing:   (shown as "Not Engaged Donors") gave in this month in
+//                fy1, gave nothing anywhere in fy2 (to date)
+//   - returning: gave in this month in fy2, and gave in fy1 in a
+//                different month
+//   - newDonors: gave in this month in fy2 with no giving history at all
+//   - past:      gave in this month in fy2, nothing in fy1, but did give
+//                in some earlier fiscal year (a lapsed donor returning)
+// Every row carries the donor's calculated `category` (A/B/C, or null).
 router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
   const fy1 = req.query.fy1 || "2025-2026";
   const fy2 = req.query.fy2 || "2026-2027";
@@ -558,18 +658,17 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
     return res.status(400).json({ error: "month query param is required" });
   }
 
-  const filters = {
-    types: parseListParam(req.query.types),
-    kams: parseListParam(req.query.kams),
-    spocs: parseListParam(req.query.spocs),
-    platforms: parseListParam(req.query.platforms),
-  };
+  const filters = parseFyComparisonFilters(req.query);
 
   try {
     const donors = await getPipelines();
-    const closeddonors = applyFilters(donors.filter(isClosed), filters);
+    const { closed, categoryMap } = datasetViews(donors);
+    // Same scope as the Comparison columns in the By Month table: every
+    // filter applies EXCEPT Platform, so these lists always match the
+    // Engaged / Not Engaged counts that were clicked.
+    const closeddonors = applyFilters(closed, { ...filters, platforms: null }, categoryMap);
 
-    const breakdown = buildMonthDonorBreakdown(closeddonors, fy1, fy2, month);
+    const breakdown = buildMonthDonorBreakdown(closeddonors, fy1, fy2, month, categoryMap);
 
     res.json({
       fy1,
@@ -593,25 +692,27 @@ router.get("/crm-analysis/fy-comparison/month-donors", async (req, res) => {
 // or the Full Year / YTD cards above it). A donor with multiple gifts
 // in scope is merged into a single row (amounts summed, Platform/KAM/
 // SPOC joined) so the popup's row count always matches the unique-donor
-// count shown wherever it was clicked from.
+// count shown wherever it was clicked from. Each row also carries the
+// donor's calculated `category` (A/B/C, or null).
 router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
   const fy = req.query.fy;
+  const fy1 = req.query.fy1 || "2025-2026";
   const month = req.query.month;
 
   if (!fy || !month) {
     return res.status(400).json({ error: "fy and month query params are required" });
   }
 
-  const filters = {
-    types: parseListParam(req.query.types),
-    kams: parseListParam(req.query.kams),
-    spocs: parseListParam(req.query.spocs),
-    platforms: parseListParam(req.query.platforms),
-  };
+  const filters = parseFyComparisonFilters(req.query);
 
   try {
     const donors = await getPipelines();
-    const closeddonors = applyFilters(donors.filter(isClosed), filters);
+    const { closed, categoryMap } = datasetViews(donors);
+    // Same platform rule as the FY columns this list was opened from:
+    // last year follows lastYearPlatforms (P3 = every platform), this
+    // year uses the platform filter as selected.
+    const scopeFilters = fy === fy1 ? { ...filters, platforms: lastYearPlatforms(filters.platforms) } : filters;
+    const closeddonors = applyFilters(closed, scopeFilters, categoryMap);
     const fyDonors = closeddonors.filter((d) => pick(d, "Fiscal_year", "") === fy);
 
     let donorsInScope;
@@ -639,6 +740,7 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
       if (!byDonor[key]) {
         byDonor[key] = {
           account: pick(d, "Account_Name"),
+          category: donorCategory(categoryMap, key),
           amount: 0,
           platforms: new Set(),
           kams: new Set(),
@@ -658,6 +760,7 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
     const rows = Object.values(byDonor)
       .map((r) => ({
         account: r.account,
+        category: r.category,
         amount: r.amount,
         platform: [...r.platforms].join(" / "),
         kam: [...r.kams].join(" / "),
@@ -689,9 +792,10 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
 
   try {
     const donors = await getPipelines();
-    const closeddonors = donors.filter(isClosed);
-    const standarddonors = donors.filter(isStandardPipeline).filter(isApprovedOpenPipeline);
-    const rows = buildEngagementComparison(closeddonors, standarddonors, fy1, fy2);
+    // categoryMap = each donor's calculated A / B / C (FY 2025-2026 total).
+    const { closed: closeddonors, standard, categoryMap } = datasetViews(donors);
+    const standarddonors = standard.filter(isApprovedOpenPipeline);
+    const rows = buildEngagementComparison(closeddonors, standarddonors, fy1, fy2, categoryMap);
 
     res.json({
       fy1,

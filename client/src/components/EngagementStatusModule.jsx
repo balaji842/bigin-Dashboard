@@ -265,6 +265,15 @@ function monthSplit(month, deals, amount) {
 // The popup is `fixed` and positioned from the cell's screen position,
 // so the table's horizontal-scroll container can't clip it; it opens
 // below the cell, or above when there isn't room underneath.
+// Export format for a Conversion Month cell: every month with its amount,
+// e.g. "March - 90000, April - 80000, May - 70000" (plain rupee numbers,
+// same months and order as the cell and its hover split).
+function monthsWithAmounts(month, deals, amount) {
+  return monthSplit(month, deals, amount)
+    .map((x) => `${x.month} - ${Number((x.amount || 0).toFixed(2))}`)
+    .join(", ");
+}
+
 function MonthBreakdown({ month, deals, amount, donorType }) {
   const [tip, setTip] = useState(null);
   const text = monthsText(month, deals);
@@ -284,13 +293,13 @@ function MonthBreakdown({ month, deals, amount, donorType }) {
     });
   };
 
+  // Always ONE line: the months are cut off with "…" when they don't fit
+  // the column (e.g. "March, February, Ja…"); hover for the full split.
   return (
-    <span
-      className="cursor-help underline decoration-dotted decoration-slate-300 underline-offset-4"
-      onMouseEnter={show}
-      onMouseLeave={() => setTip(null)}
-    >
-      {text}
+    <span className="block w-[140px] mx-auto" onMouseEnter={show} onMouseLeave={() => setTip(null)}>
+      <span className="block truncate cursor-help underline decoration-dotted decoration-slate-300 underline-offset-4">
+        {text}
+      </span>
       {tip && (
         <span
           className="fixed z-50 w-60 bg-white rounded-xl border border-slate-200 shadow-lg p-3 text-left normal-case pointer-events-none block no-underline"
@@ -326,6 +335,28 @@ function EngagementPill({ engaged }) {
     </span>
   );
 }
+
+// A / B / C donor category — calculated from the donor's FY 2025-2026
+// total (A above ₹1 Cr, B ₹50 L to ₹1 Cr, C below ₹50 L); no category when
+// the donor gave nothing in that year.
+const CATEGORY_STYLES = {
+  A: "bg-emerald-50 text-emerald-700",
+  B: "bg-sky-50 text-sky-700",
+  C: "bg-slate-100 text-slate-600",
+};
+function CategoryBadge({ value }) {
+  if (!value) return <span className="text-slate-300">—</span>;
+  return (
+    <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${CATEGORY_STYLES[value] || "bg-slate-100 text-slate-600"}`}>
+      {value}
+    </span>
+  );
+}
+
+// Frozen columns: S.No and Donor Name stay in place while every other
+// column scrolls sideways underneath them.
+const SNO_W = 56;
+const DONOR_W = 240;
 
 const DONOR_TYPE_COLORS = {
   Corporate: "bg-emerald-50 text-emerald-700",
@@ -826,6 +857,9 @@ export default function EngagementStatusModule() {
                 "engagement-status-donor-comparison.csv",
                 [
                   "Donor Name",
+                  "Category",
+                  "Platform",
+                  "SPOC",
                   `FY ${fy1} Amount`,
                   `FY ${fy1} Type of Engagement`,
                   `FY ${fy1} Conversion Month`,
@@ -838,33 +872,30 @@ export default function EngagementStatusModule() {
                   "Pipeline Amount (₹)",
                   "Pipeline Month",
                   "Engagement Status",
-                  "Platform",
-                  "SPOC",
                   "KAM",
                   "Donor Type",
-                  "Category",
                 ],
                 filteredRows.map((r) => [
                   r.account,
+                  r.category || "",
+                  r.platform || "",
+                  r.spoc || "",
                   r.fy1Amount ?? "",
                   r.fy1Type || "",
-                  // Same text the table shows: every distinct month, not
-                  // just the single last-deal month in r.fy1Month.
-                  monthsText(r.fy1Month, r.fy1Deals),
+                  // Every month with its amount ("March - 90000, April - 80000"),
+                  // not just the single last-deal month in r.fy1Month.
+                  monthsWithAmounts(r.fy1Month, r.fy1Deals, r.fy1Amount),
                   r.fy2Amount ?? "",
                   r.fy2Type || "",
-                  monthsText(r.fy2Month, r.fy2Deals),
+                  monthsWithAmounts(r.fy2Month, r.fy2Deals, r.fy2Amount),
                   r.diffAmount == null ? "" : r.diffAmount > 0 ? "Increase" : r.diffAmount < 0 ? "Decrease" : "No Change",
                   r.diffPct == null ? "" : r.diffPct.toFixed(2),
                   r.diffAmount ?? "",
                   r.pipelineAmount ?? "",
                   r.pipelineMonth || "",
                   r.engaged ? "Engaged" : "Not Engaged",
-                  r.platform || "",
-                  r.spoc || "",
                   r.kam || "",
                   r.donorType || "",
-                  r.category || "",
                 ])
               )
             }
@@ -875,8 +906,36 @@ export default function EngagementStatusModule() {
           <table className="w-full text-sm min-w-[1500px]">
             <thead>
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                <th rowSpan={2} className="px-3 py-2.5 font-semibold text-left align-middle">S.No</th>
-                <th rowSpan={2} className="px-3 py-2.5 font-semibold text-left align-middle">Donor Name</th>
+                <th
+                  rowSpan={2}
+                  style={{ position: "sticky", left: 0, width: SNO_W, minWidth: SNO_W, maxWidth: SNO_W }}
+                  className="px-3 py-2.5 font-semibold text-left align-middle bg-white z-20"
+                >
+                  S.No
+                </th>
+                <th
+                  rowSpan={2}
+                  style={{
+                    position: "sticky",
+                    left: SNO_W,
+                    width: DONOR_W,
+                    minWidth: DONOR_W,
+                    maxWidth: DONOR_W,
+                    boxShadow: "inset -1px 0 0 #e2e8f0",
+                  }}
+                  className="px-3 py-2.5 font-semibold text-left align-middle bg-white z-20"
+                >
+                  Donor Name
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <ColumnFilterMenu {...filterMenuProps("category", "Category")} />
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <ColumnFilterMenu {...filterMenuProps("platform", "Platform")} />
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <ColumnFilterMenu {...filterMenuProps("spoc", "SPOC")} />
+                </th>
                 <th colSpan={3} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy1}</th>
                 <th colSpan={3} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy2}</th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">Difference</th>
@@ -890,19 +949,10 @@ export default function EngagementStatusModule() {
                   <ColumnFilterMenu {...filterMenuProps("engaged", "Engagement Status")} />
                 </th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
-                  <ColumnFilterMenu {...filterMenuProps("platform", "Platform")} />
-                </th>
-                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
-                  <ColumnFilterMenu {...filterMenuProps("spoc", "SPOC")} />
-                </th>
-                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
                   <ColumnFilterMenu {...filterMenuProps("kam", "KAM")} />
                 </th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
                   <ColumnFilterMenu {...filterMenuProps("donorType", "Donor Type")} />
-                </th>
-                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
-                  <ColumnFilterMenu {...filterMenuProps("category", "Category")} />
                 </th>
               </tr>
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
@@ -930,15 +980,46 @@ export default function EngagementStatusModule() {
               {pageRows.map((r, i) => {
                 const span = rowSpanFor(i);
                 const isContinuation = span === 0;
+                // Frozen cells need their own solid background (the row's
+                // stripe colour) so scrolled columns don't show through.
+                const stickyBg = pageGroupIndices[i] % 2 === 1 ? "bg-slate-50" : "bg-white";
                 return (
                   <tr key={`${r.account}-${r.fy1Type}-${r.fy2Type}-${i}`} className={pageGroupIndices[i] % 2 === 1 ? "bg-slate-50" : ""}>
                     {!isContinuation && (
-                      <td rowSpan={span} className="px-3 py-2.5 text-slate-400 align-middle">{pageGroupIndices[i] + 1}</td>
+                      <td
+                        rowSpan={span}
+                        style={{ position: "sticky", left: 0, width: SNO_W, minWidth: SNO_W, maxWidth: SNO_W }}
+                        className={`px-3 py-2.5 text-slate-400 align-middle z-10 ${stickyBg}`}
+                      >
+                        {pageGroupIndices[i] + 1}
+                      </td>
                     )}
                     {!isContinuation && (
-                      <td rowSpan={span} className="px-3 py-2.5 font-medium text-navy-900 whitespace-nowrap align-middle border-r border-slate-100">
+                      <td
+                        rowSpan={span}
+                        style={{
+                          position: "sticky",
+                          left: SNO_W,
+                          width: DONOR_W,
+                          minWidth: DONOR_W,
+                          maxWidth: DONOR_W,
+                          boxShadow: "inset -1px 0 0 #e2e8f0",
+                        }}
+                        className={`px-3 py-2.5 font-medium text-navy-900 break-words align-middle z-10 ${stickyBg}`}
+                      >
                         {r.account}
                       </td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                        <CategoryBadge value={r.category} />
+                      </td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.platform || "—"}</td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.spoc || "—"}</td>
                     )}
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
                       <AmountBreakdown amount={r.fy1Amount} donorType={r.donorType} />
@@ -1012,13 +1093,10 @@ export default function EngagementStatusModule() {
                         <EngagementPill engaged={r.engaged} />
                       </td>
                     )}
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.platform || "—"}</td>
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.spoc || "—"}</td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.kam || "—"}</td>
                     <td className="px-3 py-2.5 text-center align-middle">
                       <DonorTypeBadge value={r.donorType || "Unspecified"} />
                     </td>
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.category || "—"}</td>
                   </tr>
                 );
               })}
@@ -1087,4 +1165,4 @@ export default function EngagementStatusModule() {
       </div>
     </div>
   );
-}
+} 
