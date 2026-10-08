@@ -52,7 +52,7 @@ function FilterGroup({ label, options, selected, onToggle }) {
 // don't nest one button inside another.
 function KpiDonorsLine({ donors, onDonorsClick }) {
   if (!onDonorsClick) {
-    return <p className="text-xs text-slate-400 mt-1">{donors} unique donors</p>;
+    return <p className="text-xs text-slate-400 mt-1">{donors} Donors</p>;
   }
   return (
     <button
@@ -66,7 +66,7 @@ function KpiDonorsLine({ donors, onDonorsClick }) {
         donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
       }`}
     >
-      {donors} unique donors
+      {donors} Donors
     </button>
   );
 }
@@ -120,12 +120,14 @@ function groupByField(rows, field) {
     .sort((a, b) => b.amount - a.amount);
 }
 
-// Full-table breakdown card (title + navy-headed table) — used for By
-// Donor Type / By KAM / By Platform, which get the dashboard's full
-// table treatment instead of a compact list.
+// Full-table breakdown card (title + navy-headed table) — used for
+// Month-wise / By KAM / By Platform / By Donor Type, which all get the
+// dashboard's full table treatment instead of a compact list. Rows just
+// need { name, amount, donors }; `amountLabel` is the amount column's
+// header ("Total Amount" by default, "Amount" for the month-wise table).
 // table-fixed + explicit column widths keep the header and every data
 // row's three columns lined up even when a name wraps to two lines.
-function BreakdownTable({ title, nameLabel, rows, onDonorsClick }) {
+function BreakdownTable({ title, nameLabel, amountLabel = "Total Amount", rows, onDonorsClick }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
       <p className="font-display font-bold text-navy-900 text-base mb-3">{title}</p>
@@ -139,7 +141,7 @@ function BreakdownTable({ title, nameLabel, rows, onDonorsClick }) {
           <thead>
             <tr className="bg-navy-900 text-white text-left">
               <th className="px-4 py-2.5 align-top font-semibold">{nameLabel}</th>
-              <th className="px-4 py-2.5 align-top font-semibold text-center">Total Amount</th>
+              <th className="px-4 py-2.5 align-top font-semibold text-center">{amountLabel}</th>
               <th className="px-4 py-2.5 align-top font-semibold text-center">Donors</th>
             </tr>
           </thead>
@@ -559,10 +561,10 @@ function TrendTooltip({ active, payload, label }) {
   );
 }
 
-// Two-line trend chart (current FY vs the prior FY) sitting next to the
-// month-wise table, restricted to the months that have actually
-// happened so far this FY (April through the current month) — same
-// straight-line, always-labeled style as the reference chart.
+// Two-line trend chart (current FY vs the prior FY), shown across the
+// full width under the tables, restricted to the months that have
+// actually happened so far this FY (April through the current month) —
+// same straight-line, always-labeled style as the reference chart.
 function ConversionTrendChart({ chartData, currentFY, prevFY }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
@@ -850,6 +852,14 @@ export default function CloseddonorsModule() {
     .filter(Boolean)
     .join(" · ");
 
+  // Title of the month-wise table, which follows the selected scope.
+  const monthWiseTitle =
+    scope === "pipeline"
+      ? `Month-wise pipeline (Expected Conversion, FY ${pipelineData?.fy || data?.fy})`
+      : scope === "month"
+      ? `Month-wise conversion — ${data?.currentMonth?.name} only`
+      : `Month-wise conversion (FY ${data?.fy})`;
+
   const filterBar = (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-3">
       <FilterGroup
@@ -945,93 +955,49 @@ export default function CloseddonorsModule() {
 
       {scoped && (
         <>
-          <p className="text-xs text-slate-400 -mb-2">
+          {/* <p className="text-xs text-slate-400 -mb-2">
             Showing: <span className="font-semibold text-navy-700">{scoped.label}</span>
-          </p>
+          </p> */}
 
-          <div className="grid gap-4 md:grid-cols-2 items-start">
-            <div className="flex flex-col gap-4">
-              <BreakdownTable
-                title="By Platform"
-                nameLabel="Platform"
-                rows={scoped.byPlatform}
-                onDonorsClick={(name) =>
-                  openDrilldown(`Platform: ${name}`, filterRows(scoped.table, (r) => r.platform === name))
-                }
-              />
-              <BreakdownTable
-                title="By Donor Type"
-                nameLabel="Donor Type"
-                rows={scoped.byDonorType}
-                onDonorsClick={(name) =>
-                  openDrilldown(`Donor Type: ${name}`, filterRows(scoped.table, (r) => r.donorType === name))
-                }
-              />
-            </div>
+          {/* 2 x 2 grid of tables — Month-wise (left) and By KAM (right) on
+              top, By Platform (left) and By Donor Type (right) beneath; the
+              two cards in a row are the same height. The Conversion Trend
+              chart then runs across the full width below. */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <BreakdownTable
+              title={monthWiseTitle}
+              nameLabel="Month"
+              amountLabel="Amount"
+              rows={scoped.monthWise}
+              onDonorsClick={(name) =>
+                openDrilldown(name, filterRows(scoped.table, (r) => r.monthLabel === name))
+              }
+            />
             <BreakdownTable
               title="By KAM"
               nameLabel="KAM"
               rows={scoped.byKAM}
               onDonorsClick={(name) => openDrilldown(`KAM: ${name}`, filterRows(scoped.table, (r) => r.kam === name))}
             />
+            <BreakdownTable
+              title="By Platform"
+              nameLabel="Platform"
+              rows={scoped.byPlatform}
+              onDonorsClick={(name) =>
+                openDrilldown(`Platform: ${name}`, filterRows(scoped.table, (r) => r.platform === name))
+              }
+            />
+            <BreakdownTable
+              title="By Donor Type"
+              nameLabel="Donor Type"
+              rows={scoped.byDonorType}
+              onDonorsClick={(name) =>
+                openDrilldown(`Donor Type: ${name}`, filterRows(scoped.table, (r) => r.donorType === name))
+              }
+            />
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[auto,1fr] items-start">
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden self-start">
-              <div className="bg-navy-900 text-white px-5 py-2.5">
-                <p className="font-display font-semibold text-xs whitespace-nowrap">
-                  {scope === "pipeline"
-                    ? `Month-wise pipeline (Expected Conversion, FY ${pipelineData?.fy || data.fy})`
-                    : scope === "month"
-                    ? `Month-wise conversion — ${data.currentMonth.name} only`
-                    : `Month-wise conversion (FY ${data.fy})`}
-                </p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="text-sm">
-                  <thead>
-                    <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                      <th className="pl-5 pr-6 py-2 font-semibold whitespace-nowrap">Month</th>
-                      <th className="pr-6 py-2 font-semibold text-right whitespace-nowrap">Amount</th>
-                      <th className="pr-5 py-2 font-semibold text-right whitespace-nowrap">Donors</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scoped.monthWise.map((m, i) => (
-                      <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                        <td className="pl-5 pr-6 py-2 text-navy-900 font-medium whitespace-nowrap">{m.name}</td>
-                        <td className="pr-6 py-2 text-right whitespace-nowrap">{moneyCr(m.amount)}</td>
-                        <td className="pr-5 py-2 text-right whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              m.donors > 0 &&
-                              openDrilldown(m.name, filterRows(scoped.table, (r) => r.monthLabel === m.name))
-                            }
-                            disabled={m.donors === 0}
-                            className={`font-semibold ${
-                              m.donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
-                            }`}
-                          >
-                            {m.donors}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {scoped.monthWise.length === 0 && (
-                      <tr>
-                        <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
-                          No data for this scope
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <ConversionTrendChart chartData={chartData} currentFY={data.fy} prevFY={PREV_FY} />
-          </div>
+          <ConversionTrendChart chartData={chartData} currentFY={data.fy} prevFY={PREV_FY} />
 
           <DonorHistoryTable
             ref={donorTableRef}

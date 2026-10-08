@@ -93,6 +93,56 @@ function KpiCard({ label, amount, donors, accent = "pink", active, onClick, onDo
   );
 }
 
+// The Bigin pipeline's stages, in pipeline order — the By Stage table
+// lists stages in this order (only the ones that currently have deals).
+const STAGE_ORDER = [
+  "No contact information",
+  "Contact research",
+  "Calls / Meeting Scheduled",
+  "Outreach Email / Letter Sent",
+  "Budget discussion",
+  "Requirement Identification",
+  "Meeting Scheduled",
+  "Requirement Confirmation (SMC)",
+  "Proposal Created (Cash/Material)",
+  "Proposal shared",
+  "Portal Entry",
+  "Donor Civil needs to be shared",
+  "Civil Plan Under Review",
+  "Civil approval pending",
+  "Approval Letter – Draft",
+  "Proposal Review (SE)",
+  "On Hold (SE)",
+  "Rejected by PS",
+  "MS Sign Pending",
+  "PS Review",
+  "DSE Sign pending",
+];
+
+// Matching ignores letter case, extra spaces, and which kind of dash is
+// used (– vs -), so a small difference in how Bigin spells a stage name
+// doesn't push it out of place.
+const stageKey = (name) =>
+  String(name)
+    .toLowerCase()
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/\s*([()\/-])\s*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+const STAGE_RANK = new Map(STAGE_ORDER.map((n, i) => [stageKey(n), i]));
+
+// Rows in pipeline order. A stage that isn't in the list above (a new
+// stage added in Bigin) goes after the listed ones, biggest amount first;
+// "Unspecified" always goes last.
+function orderStages(rows) {
+  const rank = (name) => {
+    if (name === "Unspecified") return Number.MAX_SAFE_INTEGER;
+    const r = STAGE_RANK.get(stageKey(name));
+    return r == null ? 1000 : r;
+  };
+  return [...rows].sort((a, b) => rank(a.name) - rank(b.name) || b.amount - a.amount);
+}
+
 // Client-side equivalent of the server's groupSummary() — amount sum +
 // distinct donor (Account_Name) count per group value. Used to recompute
 // the breakdown tables client-side when the "Month Pipeline" scope is
@@ -113,7 +163,7 @@ function groupByField(rows, field) {
 
 // Full-table breakdown card (title + navy-headed table) — used for By
 // Donor Type / By KAM / By Platform, matching the Conversion page.
-function BreakdownTable({ title, nameLabel, rows, onDonorsClick }) {
+function BreakdownTable({ title, nameLabel, rows, onDonorsClick, limit = 12 }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
       <p className="font-display font-bold text-navy-900 text-base mb-3">{title}</p>
@@ -132,7 +182,7 @@ function BreakdownTable({ title, nameLabel, rows, onDonorsClick }) {
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 12).map((r, i) => (
+            {rows.slice(0, limit).map((r, i) => (
               <tr key={r.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
                 <td className="px-4 py-2.5 align-top text-navy-900">{r.name}</td>
                 <td className="px-4 py-2.5 align-top text-center font-bold text-navy-900 whitespace-nowrap">
@@ -588,6 +638,7 @@ export default function StandardPipelineModule() {
         byPlatform: groupByField(monthRows, "platform"),
         byDonorType: groupByField(monthRows, "donorType"),
         byKAM: groupByField(monthRows, "kam"),
+        byStage: orderStages(groupByField(monthRows, "stage")),
         monthWise: data.monthWise.filter((m) => m.name === data.currentMonth.name),
         table: monthRows,
       };
@@ -598,6 +649,7 @@ export default function StandardPipelineModule() {
       byPlatform: data.byPlatform,
       byDonorType: data.byDonorType,
       byKAM: data.byKAM,
+      byStage: orderStages(data.byStage),
       monthWise: data.monthWise,
       table: data.table,
     };
@@ -707,7 +759,76 @@ export default function StandardPipelineModule() {
           </p>
 
           <div className="grid gap-4 md:grid-cols-2 items-start">
+            {/* Left column: Projected conversion month, then By Stage. */}
             <div className="flex flex-col gap-4">
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="bg-navy-900 text-white px-5 py-3">
+                  <p className="font-display font-semibold text-sm">
+                    {scope === "month"
+                      ? `Projected conversion month (FY ${data.fy}) — ${data.currentMonth.name} only`
+                      : `Projected conversion month (FY ${data.fy}) — April to March`}
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[320px]">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                        <th className="px-4 py-2 font-semibold">Expected Month</th>
+                        <th className="px-4 py-2 font-semibold text-right">Amount</th>
+                        <th className="px-4 py-2 font-semibold text-right">Donors</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleMonthWise.map((m, i) => (
+                        <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
+                          <td className="px-4 py-2 text-navy-900 font-medium">{m.name}</td>
+                          <td className="px-4 py-2 text-right">{moneyCr(m.amount)}</td>
+                          <td className="px-4 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                m.donors > 0 &&
+                                openDrilldown(m.name, filterRows(scoped.table, (r) => r.expectedMonth === m.name))
+                              }
+                              disabled={m.donors === 0}
+                              className={`font-semibold ${
+                                m.donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
+                              }`}
+                            >
+                              {m.donors}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {visibleMonthWise.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
+                            No standard pipeline donors with an expected month set
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <BreakdownTable
+                title="By Stage"
+                nameLabel="Stage"
+                rows={scoped.byStage}
+                limit={Infinity}
+                onDonorsClick={(name) =>
+                  openDrilldown(`Stage: ${name}`, filterRows(scoped.table, (r) => r.stage === name))
+                }
+              />
+            </div>
+            {/* Right column: By KAM, then By Platform and By Donor Type. */}
+            <div className="flex flex-col gap-4">
+              <BreakdownTable
+                title="By KAM"
+                nameLabel="KAM"
+                rows={scoped.byKAM}
+                onDonorsClick={(name) => openDrilldown(`KAM: ${name}`, filterRows(scoped.table, (r) => r.kam === name))}
+              />
               <BreakdownTable
                 title="By Platform"
                 nameLabel="Platform"
@@ -724,63 +845,6 @@ export default function StandardPipelineModule() {
                   openDrilldown(`Donor Type: ${name}`, filterRows(scoped.table, (r) => r.donorType === name))
                 }
               />
-            </div>
-            <BreakdownTable
-              title="By KAM"
-              nameLabel="KAM"
-              rows={scoped.byKAM}
-              onDonorsClick={(name) => openDrilldown(`KAM: ${name}`, filterRows(scoped.table, (r) => r.kam === name))}
-            />
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-            <div className="bg-navy-900 text-white px-5 py-3">
-              <p className="font-display font-semibold text-sm">
-                {scope === "month"
-                  ? `Projected conversion month (FY ${data.fy}) — ${data.currentMonth.name} only`
-                  : `Projected conversion month (FY ${data.fy}) — April to March`}
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[500px]">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                    <th className="px-4 py-2 font-semibold">Expected Month</th>
-                    <th className="px-4 py-2 font-semibold text-right">Amount</th>
-                    <th className="px-4 py-2 font-semibold text-right">Donors</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleMonthWise.map((m, i) => (
-                    <tr key={m.name} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                      <td className="px-4 py-2 text-navy-900 font-medium">{m.name}</td>
-                      <td className="px-4 py-2 text-right">{moneyCr(m.amount)}</td>
-                      <td className="px-4 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            m.donors > 0 &&
-                            openDrilldown(m.name, filterRows(scoped.table, (r) => r.expectedMonth === m.name))
-                          }
-                          disabled={m.donors === 0}
-                          className={`font-semibold ${
-                            m.donors > 0 ? "text-emerald-600 underline hover:text-emerald-700" : "text-slate-300"
-                          }`}
-                        >
-                          {m.donors}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {visibleMonthWise.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">
-                        No standard pipeline donors with an expected month set
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
             </div>
           </div>
 

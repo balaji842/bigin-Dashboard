@@ -372,6 +372,13 @@ function DonorTypeBadge({ value }) {
 
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
 
+// Month filters list months in calendar order (January -> December), not
+// alphabetically.
+const CALENDAR_MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 // Categorical columns: checkbox filter only, no sort.
 const FILTERABLE_KEYS = ["fy1Type", "fy1Month", "fy2Type", "fy2Month", "engaged", "platform", "spoc", "kam", "donorType", "category"];
 // Numeric columns: sort only, no filter.
@@ -463,6 +470,14 @@ export default function EngagementStatusModule() {
     if (!data) return out;
     for (const key of FILTERABLE_KEYS) {
       const set = new Set();
+      if (key === "fy1Month" || key === "fy2Month") {
+        // Every month any of the donors' deals fell in (not just each
+        // row's single "last deal" month), January -> December.
+        const dealsKey = key === "fy1Month" ? "fy1Deals" : "fy2Deals";
+        data.rows.forEach((r) => (r[dealsKey] || []).forEach((d) => d.month && set.add(d.month)));
+        out[key] = [...set].sort((a, b) => CALENDAR_MONTHS.indexOf(a) - CALENDAR_MONTHS.indexOf(b));
+        continue;
+      }
       data.rows.forEach((r) => {
         const v = COLUMN_DEFS[key](r);
         if (v) set.add(v);
@@ -514,6 +529,14 @@ export default function EngagementStatusModule() {
   //      FY1 filter has just its FY1 half blanked (not the whole row),
   //      so its FY2 half stays visible. Same for FY2 vs the FY2 filter.
   //   3. A row with nothing left on either side is dropped.
+  //
+  // The two Conversion Month filters go one step further: they work on
+  // the individual deals. Un-ticking a month removes that month's deals
+  // from the row entirely — the month disappears from the cell and its
+  // hover split, its amount comes out of the Amount, and Difference /
+  // Percentage / Amount Difference are recalculated from what's left.
+  // A donor with nothing left in a month-filtered year drops out, the
+  // same way the Type filters treat donors.
   const filteredRows = useMemo(() => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
@@ -544,18 +567,76 @@ export default function EngagementStatusModule() {
       diffPct: null,
     });
 
-    let baseRows = data.rows;
+    // ---- Conversion Month filters (deal level) ----
+    // Difference / % / Amount Difference after one side's amount changed.
+    const withDiff = (r) => {
+      if (r.fy1Amount == null || r.fy2Amount == null) {
+        return { ...r, diffAmount: null, absDiffAmount: null, diffPct: null };
+      }
+      const diffAmount = r.fy2Amount - r.fy1Amount;
+      const diffPct = r.fy1Amount > 0 ? (diffAmount / r.fy1Amount) * 100 : r.fy2Amount > 0 ? 100 : 0;
+      return { ...r, diffAmount, absDiffAmount: Math.abs(diffAmount), diffPct };
+    };
+    // Keep only the deals in still-ticked months on one side of a row; the
+    // side's amount, months and hover split all follow.
+    const keepMonths = (r, side, selected) => {
+      const deals = (side === 1 ? r.fy1Deals : r.fy2Deals) || [];
+      const kept = deals.filter((d) => d.month && selected.includes(d.month));
+      if (kept.length === deals.length) return r; // nothing removed
+      if (kept.length === 0) return side === 1 ? blankFy1(r) : blankFy2(r);
+      const amount = kept.reduce((sum, d) => sum + (d.amount || 0), 0);
+      return side === 1
+        ? { ...r, fy1Amount: amount, fy1Deals: kept, fy1Month: kept[0].month }
+        : { ...r, fy2Amount: amount, fy2Deals: kept, fy2Month: kept[0].month };
+    };
+
+    const fy1MonthFilter = filters.fy1Month;
+    const fy2MonthFilter = filters.fy2Month;
+    let monthRows = data.rows;
+    if (fy1MonthFilter != null || fy2MonthFilter != null) {
+      const transformed = [];
+      for (const r of data.rows) {
+        let row = r;
+        let changed = false;
+        if (fy1MonthFilter != null) {
+          const next = keepMonths(row, 1, fy1MonthFilter);
+          if (next !== row) { row = next; changed = true; }
+        }
+        if (fy2MonthFilter != null) {
+          const next = keepMonths(row, 2, fy2MonthFilter);
+          if (next !== row) { row = next; changed = true; }
+        }
+        if (changed) {
+          if (!row.fy1Type && !row.fy2Type) continue; // had gifts, none left in the ticked months
+          row = withDiff(row);
+        }
+        transformed.push(row);
+      }
+      const fy1Left = new Set();
+      const fy2Left = new Set();
+      for (const r of transformed) {
+        if (r.fy1Type) fy1Left.add(r.account);
+        if (r.fy2Type) fy2Left.add(r.account);
+      }
+      monthRows = transformed.filter(
+        (r) =>
+          (fy1MonthFilter == null || fy1Left.has(r.account)) &&
+          (fy2MonthFilter == null || fy2Left.has(r.account))
+      );
+    }
+
+    let baseRows = monthRows;
 
     if (fy1Filter != null || fy2Filter != null) {
       const fy1Donors = new Set();
       const fy2Donors = new Set();
-      for (const r of data.rows) {
+      for (const r of monthRows) {
         if (fy1Filter != null && r.fy1Type && fy1Filter.includes(r.fy1Type)) fy1Donors.add(r.account);
         if (fy2Filter != null && r.fy2Type && fy2Filter.includes(r.fy2Type)) fy2Donors.add(r.account);
       }
 
       baseRows = [];
-      for (const r of data.rows) {
+      for (const r of monthRows) {
         if (fy1Filter != null && !fy1Donors.has(r.account)) continue;
         if (fy2Filter != null && !fy2Donors.has(r.account)) continue;
 
@@ -572,7 +653,7 @@ export default function EngagementStatusModule() {
       if (q && !r.account.toLowerCase().includes(q)) return false;
       if (pipelineOnly && !r.pipelineMonth) return false;
       for (const key of FILTERABLE_KEYS) {
-        if (key === "fy1Type" || key === "fy2Type") continue; // handled above
+        if (key === "fy1Type" || key === "fy2Type" || key === "fy1Month" || key === "fy2Month") continue; // handled above
         const selected = filters[key];
         if (selected == null) continue;
         const value = COLUMN_DEFS[key](r);
@@ -1165,4 +1246,4 @@ export default function EngagementStatusModule() {
       </div>
     </div>
   );
-} 
+}
