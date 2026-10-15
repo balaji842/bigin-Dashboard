@@ -58,7 +58,7 @@ export default function LoginGate({ onUnlock }) {
             <img src="/logo-mbyom.png" alt="mByom logo" className="w-full h-full object-cover" />
           </span>
           <p className="font-display font-bold text-navy-900 text-lg">
-            Bigin<span className="text-pink-500">.</span>Analysis
+            CRM<span className="text-pink-500">.</span>Analysis
           </p>
         </div>
         <p className="text-sm text-slate-500 mb-5">

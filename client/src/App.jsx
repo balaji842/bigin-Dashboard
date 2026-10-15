@@ -7,6 +7,7 @@ import ClosedDealsModule from "./components/ClosedDealsModule.jsx";
 import StandardPipelineModule from "./components/StandardPipelineModule.jsx";
 import FYComparisonModule from "./components/FYComparisonModule.jsx";
 import EngagementStatusModule from "./components/EngagementStatusModule.jsx";
+import OverallComparisonModule from "./components/OverallComparisonModule.jsx";
 import LoginGate, { isUnlocked } from "./components/LoginGate.jsx";
 import AIChatbot from "./components/AIChatbot.jsx";
 
@@ -21,15 +22,19 @@ const PAGE_TITLES = {
 },
   "fy-comparison": {
     title: "FY 2025-26 vs FY 2026-27",
-    sub: "Side-by-side comparison of closed donors and standard pipeline across both fiscal years.",
+    // sub: "Side-by-side comparison of closed donors and standard pipeline across both fiscal years.",
   },
   "engagement-status": {
     title: "Engagement Status",
-    sub: "Donor-wise retention comparison: who gave in FY 2025-26, and whether they're still engaged in FY 2026-27.",
+    // sub: "Donor-wise retention comparison: who gave in FY 2025-26, and whether they're still engaged in FY 2026-27.",
+  },
+  "overall-comparison": {
+    title: "Overall Comparison",
+    // sub: "Every donor across all financial years: amounts and conversion months by year, with a category based on their cumulative total.",
   },
   "crm-overview": {
     title: "CRM Analysis · Overview",
-    sub: "Closed donors, standard pipeline, and donor breakdowns pulled fresh from Bigin.",
+    // sub: "Closed donors, standard pipeline, and donor breakdowns pulled fresh from Bigin.",
   },
 };
 
@@ -100,6 +105,7 @@ export default function App() {
           {activePage === "standard-pipeline" && <StandardPipelineModule />}
           {activePage === "fy-comparison" && <FYComparisonModule />}
           {activePage === "engagement-status" && <EngagementStatusModule />}
+          {activePage === "overall-comparison" && <OverallComparisonModule />}
           {activePage === "closed-donors" && <ClosedDealsModule />}
         </main>
 

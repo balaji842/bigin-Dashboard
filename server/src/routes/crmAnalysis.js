@@ -22,7 +22,12 @@ import {
   buildDonorCategories,
   donorCategory,
   buildMonthEngagementCounts,
+  buildOverallComparison,
+  buildDonorRemarks,
+  buildDonorCalls,
 } from "../lib/dealHelpers.js";
+import { getNotes, invalidateNotesCache } from "../lib/notesCache.js";
+import { getCalls, invalidateCallsCache } from "../lib/callsCache.js";
 import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
 
@@ -115,7 +120,13 @@ const router = Router();
 router.post("/crm-analysis/refresh", async (_req, res) => {
   try {
     invalidatePipelinesCache();
+    invalidateNotesCache();
+    invalidateCallsCache();
     const donors = await getPipelines({ force: true });
+    // Notes refresh in the background — they're optional, so the Refresh
+    // button never waits on them and never fails because of them.
+    getNotes({ force: true }).catch((err) => console.error("[notes] refresh failed:", err.message));
+    getCalls({ force: true }).catch((err) => console.error("[calls] refresh failed:", err.message));
     res.json({ ok: true, count: donors.length, ...pipelinesCacheInfo() });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -251,6 +262,7 @@ router.get("/crm-analysis/overview", async (req, res) => {
       table: filtereddonorsForData.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
+        accountId: d.Account_Name?.id != null ? String(d.Account_Name.id) : null,
         amount: Number(d.Amount) || 0,
         subPipeline: pick(d, "Sub_Pipeline"),
         stage: pick(d, "Stage"),
@@ -803,6 +815,92 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
       rows,
       generatedAt: new Date().toISOString(),
     });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/crm-analysis/donor-remarks
+//
+// The "Remarks" column of the Overview page's Donor History table: the
+// Bigin Notes on each donor's company record, newest first, grouped by
+// company id. Notes are optional — if Bigin can't give them (typically the
+// Zoho token lacks the ZohoBigin.modules.notes.READ scope) this still
+// answers 200 with an empty list and an `error` message the page shows,
+// so the rest of the dashboard is unaffected.
+router.get("/crm-analysis/donor-remarks", async (_req, res) => {
+  try {
+    const donors = await getPipelines();
+    const accountIds = new Set(
+      donors.map((d) => (d.Account_Name?.id != null ? String(d.Account_Name.id) : null)).filter(Boolean)
+    );
+    const notes = await getNotes();
+    res.json({ remarks: buildDonorRemarks(notes, accountIds), generatedAt: new Date().toISOString() });
+  } catch (err) {
+    const code = err?.body?.code || "";
+    const scopeProblem = err?.status === 401 || err?.status === 403 || /SCOPE|AUTHORIZ|PERMISSION/i.test(code);
+    console.error("[donor-remarks]", err.message);
+    res.json({
+      remarks: {},
+      error: scopeProblem
+        ? "Remarks unavailable: the Zoho token doesn't have permission to read Notes (needs the ZohoBigin.modules.notes.READ scope)."
+        : `Remarks unavailable: ${err.message}`,
+      generatedAt: new Date().toISOString(),
+    });
+  }
+});
+
+// GET /api/crm-analysis/donor-calls
+//
+// The "Calls" column of the Overview page's Donor History table: the calls
+// logged in Bigin (Activities -> Calls) about each donor's company, newest
+// first, grouped by company id (see buildDonorCalls). Calls are optional —
+// if Bigin can't give them (typically the Zoho token lacks the calls
+// permission) this still answers 200 with an empty list and an `error`
+// message for the page to show, so the rest of the dashboard is unaffected.
+router.get("/crm-analysis/donor-calls", async (_req, res) => {
+  try {
+    const donors = await getPipelines();
+    const accountIds = new Set();
+    const dealToAccount = new Map(); // a call can be "Related To" a deal instead of the company
+    for (const d of donors) {
+      const accId = d.Account_Name?.id != null ? String(d.Account_Name.id) : null;
+      if (!accId) continue;
+      accountIds.add(accId);
+      if (d.id != null) dealToAccount.set(String(d.id), accId);
+    }
+    const { calls, fieldKeys } = await getCalls();
+    res.json({ calls: buildDonorCalls(calls, fieldKeys, accountIds, dealToAccount), generatedAt: new Date().toISOString() });
+  } catch (err) {
+    const code = err?.body?.code || "";
+    const scopeProblem = err?.status === 401 || err?.status === 403 || /SCOPE|AUTHORIZ|PERMISSION/i.test(code);
+    console.error("[donor-calls]", err.message);
+    res.json({
+      calls: {},
+      error: scopeProblem
+        ? "Calls unavailable: the Zoho token doesn't have permission to read Calls (needs the ZohoBigin.modules.calls.READ scope, or ZohoBigin.modules.ALL)."
+        : `Calls unavailable: ${err.message}`,
+      generatedAt: new Date().toISOString(),
+    });
+  }
+});
+
+// GET /api/crm-analysis/overall-comparison
+//
+// Powers the Overall Comparison page: every donor with all of their
+// closed deals across every fiscal year (see buildOverallComparison in
+// dealHelpers.js), plus the cumulative A / B / C category. It doesn't
+// depend on any filter, so it's built once per data snapshot and reused.
+const overallComparisonCache = new WeakMap();
+router.get("/crm-analysis/overall-comparison", async (_req, res) => {
+  try {
+    const donors = await getPipelines();
+    let result = overallComparisonCache.get(donors);
+    if (!result) {
+      result = buildOverallComparison(datasetViews(donors).closed);
+      overallComparisonCache.set(donors, result);
+    }
+    res.json({ ...result, generatedAt: new Date().toISOString() });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }

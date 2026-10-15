@@ -487,6 +487,51 @@ export default function EngagementStatusModule() {
     return out;
   }, [data]);
 
+  // One set of numbers per DONOR, worked out from ALL of that donor's rows
+  // (every Type, every month) — so no column filter can change them:
+  //   - Difference / Percentage / Amount Difference compare the donor's
+  //     TOTAL FY 2026-27 against their TOTAL FY 2025-26 (Cash + Kind +
+  //     School Engagement together). A donor with no FY 2026-27 giving at
+  //     all has nothing to compare, so they show "—".
+  //   - Pipeline Amount is the donor's pipeline across all Types, and
+  //     Pipeline Month lists every expected month.
+  // The table shows each of these once per donor (a merged cell).
+  const donorTotals = useMemo(() => {
+    const totals = new Map();
+    if (!data) return totals;
+    for (const r of data.rows) {
+      let t = totals.get(r.account);
+      if (!t) {
+        t = { fy1: 0, fy2: 0, hasFy2: false, pipelineAmount: 0, hasPipeline: false, pipelineMonths: [] };
+        totals.set(r.account, t);
+      }
+      if (r.fy1Amount != null) t.fy1 += r.fy1Amount;
+      if (r.fy2Amount != null) {
+        t.fy2 += r.fy2Amount;
+        t.hasFy2 = true;
+      }
+      if (r.pipelineAmount != null) {
+        t.pipelineAmount += r.pipelineAmount;
+        t.hasPipeline = true;
+      }
+      if (r.pipelineMonth) {
+        for (const mo of r.pipelineMonth.split(",").map((x) => x.trim()).filter(Boolean)) {
+          if (!t.pipelineMonths.includes(mo)) t.pipelineMonths.push(mo);
+        }
+      }
+    }
+    for (const t of totals.values()) {
+      if (t.hasFy2) {
+        t.diffAmount = t.fy2 - t.fy1;
+        t.diffPct = t.fy1 > 0 ? (t.diffAmount / t.fy1) * 100 : t.fy2 > 0 ? 100 : 0;
+      } else {
+        t.diffAmount = null;
+        t.diffPct = null;
+      }
+    }
+    return totals;
+  }, [data]);
+
   const toggleFilter = (key) => (value) => {
     setFilters((prev) => {
       const allOptions = optionsFor[key];
@@ -567,16 +612,12 @@ export default function EngagementStatusModule() {
       diffPct: null,
     });
 
+    // Rows that carry no FY 2025-26 / FY 2026-27 gift (just a pipeline
+    // entry for a Type) are not shown as rows of their own any more — that
+    // pipeline now lives in the donor's single Pipeline Amount / Month cells.
+    const dataRows = data.rows.filter((r) => r.fy1Type || r.fy2Type);
+
     // ---- Conversion Month filters (deal level) ----
-    // Difference / % / Amount Difference after one side's amount changed.
-    const withDiff = (r) => {
-      if (r.fy1Amount == null || r.fy2Amount == null) {
-        return { ...r, diffAmount: null, absDiffAmount: null, diffPct: null };
-      }
-      const diffAmount = r.fy2Amount - r.fy1Amount;
-      const diffPct = r.fy1Amount > 0 ? (diffAmount / r.fy1Amount) * 100 : r.fy2Amount > 0 ? 100 : 0;
-      return { ...r, diffAmount, absDiffAmount: Math.abs(diffAmount), diffPct };
-    };
     // Keep only the deals in still-ticked months on one side of a row; the
     // side's amount, months and hover split all follow.
     const keepMonths = (r, side, selected) => {
@@ -592,10 +633,10 @@ export default function EngagementStatusModule() {
 
     const fy1MonthFilter = filters.fy1Month;
     const fy2MonthFilter = filters.fy2Month;
-    let monthRows = data.rows;
+    let monthRows = dataRows;
     if (fy1MonthFilter != null || fy2MonthFilter != null) {
       const transformed = [];
-      for (const r of data.rows) {
+      for (const r of dataRows) {
         let row = r;
         let changed = false;
         if (fy1MonthFilter != null) {
@@ -606,10 +647,9 @@ export default function EngagementStatusModule() {
           const next = keepMonths(row, 2, fy2MonthFilter);
           if (next !== row) { row = next; changed = true; }
         }
-        if (changed) {
-          if (!row.fy1Type && !row.fy2Type) continue; // had gifts, none left in the ticked months
-          row = withDiff(row);
-        }
+        // had gifts, none left in the ticked months -> the row is gone
+        // (Difference / % / Amount Difference are per donor and don't change)
+        if (changed && !row.fy1Type && !row.fy2Type) continue;
         transformed.push(row);
       }
       const fy1Left = new Set();
@@ -651,7 +691,7 @@ export default function EngagementStatusModule() {
 
     let rows = baseRows.filter((r) => {
       if (q && !r.account.toLowerCase().includes(q)) return false;
-      if (pipelineOnly && !r.pipelineMonth) return false;
+      if (pipelineOnly && !donorTotals.get(r.account)?.hasPipeline) return false;
       for (const key of FILTERABLE_KEYS) {
         if (key === "fy1Type" || key === "fy2Type" || key === "fy1Month" || key === "fy2Month") continue; // handled above
         const selected = filters[key];
@@ -681,7 +721,7 @@ export default function EngagementStatusModule() {
     }
 
     return rows;
-  }, [data, search, filters, pipelineOnly, sortColumn, sortDir]);
+  }, [data, donorTotals, search, filters, pipelineOnly, sortColumn, sortDir]);
 
   // Unique-donor counts AND amount totals for the summary cards — now
   // computed from the FILTERED rows (search + every column filter), so
@@ -956,7 +996,14 @@ export default function EngagementStatusModule() {
                   "KAM",
                   "Donor Type",
                 ],
-                filteredRows.map((r) => [
+                filteredRows.map((r, idx) => {
+                  // Difference / Percentage / Amount Difference / Pipeline
+                  // are per donor — written on the donor's first row only
+                  // (as on screen), so summing a column in Excel doesn't
+                  // count a donor's totals once per Type row.
+                  const first = idx === 0 || filteredRows[idx - 1].account !== r.account;
+                  const t = donorTotals.get(r.account) || {};
+                  return [
                   r.account,
                   r.category || "",
                   r.platform || "",
@@ -969,15 +1016,16 @@ export default function EngagementStatusModule() {
                   r.fy2Amount ?? "",
                   r.fy2Type || "",
                   monthsWithAmounts(r.fy2Month, r.fy2Deals, r.fy2Amount),
-                  r.diffAmount == null ? "" : r.diffAmount > 0 ? "Increase" : r.diffAmount < 0 ? "Decrease" : "No Change",
-                  r.diffPct == null ? "" : r.diffPct.toFixed(2),
-                  r.diffAmount ?? "",
-                  r.pipelineAmount ?? "",
-                  r.pipelineMonth || "",
+                  !first || t.diffAmount == null ? "" : t.diffAmount > 0 ? "Increase" : t.diffAmount < 0 ? "Decrease" : "No Change",
+                  !first || t.diffPct == null ? "" : t.diffPct.toFixed(2),
+                  !first ? "" : t.diffAmount ?? "",
+                  !first || !t.hasPipeline ? "" : t.pipelineAmount,
+                  !first ? "" : (t.pipelineMonths || []).join(", "),
                   r.engaged ? "Engaged" : "Not Engaged",
                   r.kam || "",
                   r.donorType || "",
-                ])
+                  ];
+                })
               )
             }
           />
@@ -1064,6 +1112,7 @@ export default function EngagementStatusModule() {
                 // Frozen cells need their own solid background (the row's
                 // stripe colour) so scrolled columns don't show through.
                 const stickyBg = pageGroupIndices[i] % 2 === 1 ? "bg-slate-50" : "bg-white";
+                const t = donorTotals.get(r.account) || {}; // this donor's totals
                 return (
                   <tr key={`${r.account}-${r.fy1Type}-${r.fy2Type}-${i}`} className={pageGroupIndices[i] % 2 === 1 ? "bg-slate-50" : ""}>
                     {!isContinuation && (
@@ -1120,64 +1169,79 @@ export default function EngagementStatusModule() {
                     <td className="px-3 py-2.5 text-center align-middle">
                       <MonthBreakdown month={r.fy2Month} deals={r.fy2Deals} amount={r.fy2Amount} donorType={r.donorType} />
                     </td>
-                    <td className="px-3 py-2.5 text-center border-l border-slate-100 whitespace-nowrap align-middle">
-                      {r.diffAmount != null ? (
-                        r.diffAmount > 0 ? (
-                          <span className="inline-flex items-center gap-1 font-semibold text-emerald-600">
-                            <ArrowUpIcon className="w-3.5 h-3.5" /> Increase
-                          </span>
-                        ) : r.diffAmount < 0 ? (
-                          <span className="inline-flex items-center gap-1 font-semibold text-red-500">
-                            <ArrowDownIcon className="w-3.5 h-3.5" /> Decrease
+                    {/* Per-donor cells: one merged cell for the donor's whole group of rows */}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center border-l border-slate-100 whitespace-nowrap align-middle">
+                        {t.diffAmount != null ? (
+                          t.diffAmount > 0 ? (
+                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-600">
+                              <ArrowUpIcon className="w-3.5 h-3.5" /> Increase
+                            </span>
+                          ) : t.diffAmount < 0 ? (
+                            <span className="inline-flex items-center gap-1 font-semibold text-red-500">
+                              <ArrowDownIcon className="w-3.5 h-3.5" /> Decrease
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 font-medium">— No Change</span>
+                          )
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-right whitespace-nowrap align-middle">
+                        {t.diffPct != null ? (
+                          <span
+                            className={`font-semibold ${
+                              t.diffPct > 0 ? "text-emerald-600" : t.diffPct < 0 ? "text-red-500" : "text-slate-500"
+                            }`}
+                          >
+                            {t.diffPct > 0 ? "" : t.diffPct < 0 ? "-" : ""}{Math.abs(t.diffPct).toFixed(2)}%
                           </span>
                         ) : (
-                          <span className="text-slate-500 font-medium">— No Change</span>
-                        )
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 text-right whitespace-nowrap align-middle">
-                      {r.diffPct != null ? (
-                        <span
-                          className={`font-semibold ${
-                            r.diffPct > 0 ? "text-emerald-600" : r.diffPct < 0 ? "text-red-500" : "text-slate-500"
-                          }`}
-                        >
-                          {r.diffPct > 0 ? "" : r.diffPct < 0 ? "-" : ""}{Math.abs(r.diffPct).toFixed(2)}%
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 text-right whitespace-nowrap align-middle">
-                      {r.diffAmount != null ? (
-                        <span
-                          className={`font-semibold ${
-                            r.diffAmount > 0 ? "text-emerald-600" : r.diffAmount < 0 ? "text-red-500" : "text-slate-500"
-                          }`}
-                        >
-                          {r.diffAmount > 0 ? "+" : r.diffAmount < 0 ? "-" : ""}{moneyCr(r.absDiffAmount)}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
-                      {r.pipelineAmount != null ? moneyCr(r.pipelineAmount) : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
-                      {r.pipelineMonth || <span className="text-slate-300">—</span>}
-                    </td>
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-right whitespace-nowrap align-middle">
+                        {t.diffAmount != null ? (
+                          <span
+                            className={`font-semibold ${
+                              t.diffAmount > 0 ? "text-emerald-600" : t.diffAmount < 0 ? "text-red-500" : "text-slate-500"
+                            }`}
+                          >
+                            {t.diffAmount > 0 ? "+" : t.diffAmount < 0 ? "-" : ""}{moneyCr(Math.abs(t.diffAmount))}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
+                        {t.hasPipeline ? moneyCr(t.pipelineAmount) : <span className="text-slate-300">—</span>}
+                      </td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                        {t.pipelineMonths && t.pipelineMonths.length > 0 ? t.pipelineMonths.join(", ") : <span className="text-slate-300">—</span>}
+                      </td>
+                    )}
                     {!isContinuation && (
                       <td rowSpan={span} className="px-3 py-2.5 text-center border-l border-slate-100 align-middle">
                         <EngagementPill engaged={r.engaged} />
                       </td>
                     )}
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.kam || "—"}</td>
-                    <td className="px-3 py-2.5 text-center align-middle">
-                      <DonorTypeBadge value={r.donorType || "Unspecified"} />
-                    </td>
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.kam || "—"}</td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center align-middle">
+                        <DonorTypeBadge value={r.donorType || "Unspecified"} />
+                      </td>
+                    )}
                   </tr>
                 );
               })}

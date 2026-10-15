@@ -152,6 +152,138 @@ export function monthWiseSummary(donors, dateField = "Closing_Date") {
   }));
 }
 
+// ---------------------------------------------------------------------
+// Overall Comparison page: every donor, every fiscal year.
+//
+// One entry per donor with ALL of their closed deals (fiscal year, month,
+// amount, Type — newest first), so the page can filter by fiscal year /
+// Type and total things up on the client without another request.
+//
+// `category` is the donor's CUMULATIVE closed total across ALL fiscal
+// years (every Type), run through the usual A / B / C thresholds
+// (A above ₹1 Cr, B ₹50 L to ₹1 Cr, C below ₹50 L). It's deliberately not
+// narrowed by any filter on the page. (The FY Comparison / Engagement
+// Status pages use the FY 2025-2026 total instead.)
+// ---------------------------------------------------------------------
+export function buildOverallComparison(closedDonors) {
+  const byDonor = new Map();
+  const years = new Set();
+  for (const d of closedDonors) {
+    const key = uniqueDonorKey(d);
+    if (!key) continue;
+    const fy = pick(d, "Fiscal_year", "Unspecified");
+    if (fy === "Unspecified") continue;
+    years.add(fy);
+    const k = String(key);
+    let info = byDonor.get(k);
+    if (!info) {
+      info = { account: pick(d, "Account_Name"), total: 0, deals: [] };
+      byDonor.set(k, info);
+    }
+    const amount = pickNumber(d, "Amount");
+    info.total += amount;
+    info.deals.push({
+      fy,
+      month: monthNameOf(d.Closing_Date),
+      amount,
+      type: pick(d, "Type"),
+      t: d.Closing_Date ? new Date(d.Closing_Date).getTime() || 0 : 0,
+    });
+  }
+
+  const rows = [...byDonor.values()]
+    .map((info) => {
+      info.deals.sort((a, b) => b.t - a.t);
+      return {
+        account: info.account,
+        total: info.total,
+        category: categoryForAmount(info.total),
+        deals: info.deals.map(({ fy, month, amount, type }) => ({ fy, month, amount, type })),
+      };
+    })
+    .sort((a, b) => b.total - a.total);
+
+  return { years: [...years].sort(), rows };
+}
+
+// ---------------------------------------------------------------------
+// Donor remarks: Bigin Notes grouped by the company (Account) they sit on.
+//
+// `notes` are raw Bigin Notes records; each one's Parent_Id.id is the id of
+// the record it belongs to. Only notes whose parent is one of `accountIds`
+// (the companies that appear on deals) are kept; notes on anything else are
+// ignored. Returns { [accountId]: [{ title, content, createdTime, author }] },
+// newest first.
+// ---------------------------------------------------------------------
+export function buildDonorRemarks(notes, accountIds) {
+  const wanted = accountIds instanceof Set ? accountIds : new Set(accountIds);
+  const out = {};
+  for (const n of notes || []) {
+    const id = n?.Parent_Id?.id != null ? String(n.Parent_Id.id) : null;
+    if (!id || !wanted.has(id)) continue;
+    const title = String(n.Note_Title || "").trim();
+    const content = String(n.Note_Content || "").trim();
+    if (!title && !content) continue; // an empty note says nothing
+    (out[id] ||= []).push({
+      title,
+      content,
+      createdTime: n.Created_Time || null,
+      author: n.Created_By?.name || n.Owner?.name || "",
+    });
+  }
+  for (const list of Object.values(out)) {
+    list.sort((a, b) => String(b.createdTime || "").localeCompare(String(a.createdTime || "")));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------
+// Donor calls: Bigin Calls grouped by the company (Account) they're about.
+//
+// A call's "Related To" (What_Id) is normally the company itself; if it's a
+// pipeline deal instead, `dealToAccount` (deal id -> company id) finds the
+// company. Calls about anything else are ignored. Returns
+// { [accountId]: [{ id, donorName, date, spoc, purpose, description, type,
+// result }] }, newest first.
+//   - donorName = the call's "To/From" (falling back to the related company)
+//   - spoc      = "Call SPOC Names": the field's API name comes from
+//                 fieldKeys.spoc when Bigin's field metadata was available,
+//                 otherwise any field on the call with "spoc" in its name.
+// ---------------------------------------------------------------------
+export function buildDonorCalls(calls, fieldKeys, accountIds, dealToAccount) {
+  const wanted = accountIds instanceof Set ? accountIds : new Set(accountIds);
+  const text = (v) => {
+    if (v == null) return "";
+    if (Array.isArray(v)) return v.map(text).filter(Boolean).join(", ");
+    if (typeof v === "object") return String(v.name ?? v.display_value ?? v.value ?? "").trim();
+    return String(v).trim();
+  };
+  const out = {};
+  for (const c of calls || []) {
+    const relId = c?.What_Id?.id != null ? String(c.What_Id.id) : null;
+    if (!relId) continue;
+    const accountId = wanted.has(relId) ? relId : dealToAccount?.get(relId) || null;
+    if (!accountId || !wanted.has(accountId)) continue;
+
+    const spocKey = fieldKeys?.spoc || Object.keys(c).find((k) => /spoc/i.test(k));
+    const toFrom = fieldKeys?.toFrom ? text(c[fieldKeys.toFrom]) : "";
+    (out[accountId] ||= []).push({
+      id: c.id != null ? String(c.id) : null,
+      donorName: toFrom || text(c.Who_Id) || text(c.Subject) || text(c.What_Id),
+      date: c.Call_Start_Time || null,
+      spoc: spocKey ? text(c[spocKey]) : "",
+      purpose: text(c.Call_Purpose),
+      description: String(c.Description || "").trim(),
+      type: text(c.Call_Type),
+      result: text(c.Call_Result),
+    });
+  }
+  for (const list of Object.values(out)) {
+    list.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  }
+  return out;
+}
+
 // Standard pipeline donors aren't closed yet, so there's no Closing_Date
 // to bucket by. Expected_Conversion_Month is a picklist (plain string
 // like "April"), not a date — group directly on that value instead of

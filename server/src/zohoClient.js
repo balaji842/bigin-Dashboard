@@ -110,12 +110,14 @@ const DEFAULT_FIELDS = {
   Events: "Event_Title,Start_DateTime,End_DateTime,Owner",
 };
 
+// `fields: false` deliberately sends no "fields" param at all (and skips
+// the missing-fields warning) — used by fetchAllNotes()'s fallback.
 async function fetchAllRecords(module, { fields, extraParams = {}, maxPages = 200 } = {}) {
   const perPage = 200;
   const all = [];
-  const fieldsToUse = fields || DEFAULT_FIELDS[module];
+  const fieldsToUse = fields === false ? null : fields || DEFAULT_FIELDS[module];
 
-  if (!fieldsToUse) {
+  if (!fieldsToUse && fields !== false) {
     console.warn(
       `[zohoClient] No "fields" defined for module "${module}" in DEFAULT_FIELDS — ` +
       `Bigin will likely reject this call with REQUIRED_PARAM_MISSING. Add an entry ` +
@@ -169,4 +171,91 @@ async function fetchAllRecords(module, { fields, extraParams = {}, maxPages = 20
   return all;
 }
 
-export { biginRequest, fetchAllRecords, getAccessToken, DEFAULT_FIELDS };
+// Every note in Bigin, from every record, in one paged read (GET /Notes,
+// 200 per call) — far cheaper than asking for each company's notes one by
+// one. Each note says which record it belongs to in Parent_Id ({ id, name,
+// module }), which is how the dashboard matches notes to donors.
+//
+// Needs the ZohoBigin.modules.notes.READ scope on the Zoho API client /
+// refresh token. If Bigin rejects one of the requested field names (400),
+// it asks again without a "fields" list so Bigin sends its default set.
+const NOTE_FIELDS = "Note_Title,Note_Content,Parent_Id,Created_Time,Created_By,Owner";
+
+async function fetchAllNotes() {
+  try {
+    return await fetchAllRecords("Notes", { fields: NOTE_FIELDS });
+  } catch (err) {
+    if (err.status !== 400) throw err;
+    console.warn("[zohoClient] Bigin rejected the Notes field list; retrying with Bigin's default fields.");
+    return fetchAllRecords("Notes", { fields: false });
+  }
+}
+
+// Every call logged in Bigin (Activities -> Calls), for the Calls column on
+// the Overview page. Each call says which record it's "Related To" in
+// What_Id (a company) and who it was "To/From" in Who_Id.
+//
+// "Call SPOC Names" is a custom field, so its API name isn't known up
+// front. The Fields metadata API is asked for the Calls fields and the ones
+// we need are found by their on-screen LABEL; those API names are added to
+// the request and returned in `fieldKeys`. That lookup is optional — if
+// it's refused (it needs ZohoBigin.settings.fields.READ) or a field name is
+// rejected (400), the request is retried with no "fields" list at all (so
+// Bigin sends its default set and the SPOC field is found by name among it),
+// and last with just the standard documented fields.
+//
+// Needs the ZohoBigin.modules.calls.READ scope (or ZohoBigin.modules.ALL).
+const CALL_STANDARD_FIELDS =
+  "Subject,Call_Type,Call_Start_Time,Call_Duration,Call_Purpose,Call_Result,Call_Agenda,Description,Who_Id,What_Id,Owner";
+
+const CALL_LABELS = {
+  toFrom: ["to/from"],
+  spoc: ["call spoc names", "call spoc name", "call spoc", "spoc"],
+};
+
+async function getCallFieldKeys() {
+  const data = await biginRequest("/settings/fields", { params: { module: "Calls" } });
+  const byLabel = {};
+  for (const f of data?.fields || []) {
+    byLabel[String(f.field_label || f.display_label || "").trim().toLowerCase()] = f.api_name;
+  }
+  const keys = {};
+  for (const [name, labels] of Object.entries(CALL_LABELS)) {
+    const hit = labels.find((l) => byLabel[l]);
+    if (hit) keys[name] = byLabel[hit];
+  }
+  return keys;
+}
+
+async function fetchAllCalls() {
+  let fieldKeys = {};
+  try {
+    fieldKeys = await getCallFieldKeys();
+  } catch (err) {
+    console.warn(`[zohoClient] Couldn't look up the Calls field names (${err.message}); using the standard ones.`);
+  }
+
+  const extra = Object.values(fieldKeys);
+  const withExtra = [...new Set([...CALL_STANDARD_FIELDS.split(","), ...extra])].join(",");
+  // Best first: the looked-up field list; then NO list (Bigin's own default
+  // set, which includes custom fields like the SPOC one); then only the
+  // standard documented fields as a last resort.
+  const attempts = (extra.length ? [withExtra, false, CALL_STANDARD_FIELDS] : [false, CALL_STANDARD_FIELDS]).filter(
+    (f, i, a) => a.indexOf(f) === i
+  );
+
+  let lastErr;
+  for (const fields of attempts) {
+    try {
+      const calls = await fetchAllRecords("Calls", { fields });
+      return { calls, fieldKeys };
+    } catch (err) {
+      if (err.status !== 400) throw err;
+      lastErr = err;
+      console.warn("[zohoClient] Bigin rejected the Calls field list; trying a simpler request.");
+    }
+  }
+  throw lastErr;
+}
+
+export { biginRequest, fetchAllRecords, fetchAllNotes, fetchAllCalls, getAccessToken, DEFAULT_FIELDS };

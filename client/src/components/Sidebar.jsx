@@ -1,4 +1,4 @@
-import { IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar, IconCheckCircle } from "./icons.jsx";
+import { IconChartBars, IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar, IconCheckCircle } from "./icons.jsx";
 const NAV_ITEMS = [
   //{ id: "bigin-overview", label: "Bigin Overview", ready: true },
   { id: "crm-overview", label: "Overview", ready: true, icon: IconTarget },
@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { id: "standard-pipeline", label: "Pipeline", ready: true, icon: IconTrendingUp },
   { id: "fy-comparison", label: "FY Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
     { id: "engagement-status", label: "Engagement Status", ready: true, icon: IconCheckCircle },
+  { id: "overall-comparison", label: "Overall Comparison", ready: true, icon: IconChartBars },
 
 ];
 
@@ -28,7 +29,7 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
           </span>
           <div className="min-w-0">
             <p className="font-display font-bold text-lg tracking-tight leading-none">
-              Bigin<span className="text-pink-400">.</span>Analysis
+              CRM<span className="text-pink-400">.</span>Analysis
             </p>
             <p className="text-xs text-white/40 mt-1">NSNOP · Live CRM data</p>
           </div>

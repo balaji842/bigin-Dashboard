@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import DonorHistoryTable from "./DonorHistoryTable.jsx";
 import DonorHistoryModal from "./DonorHistoryModal.jsx";
+import DonorCallsModal from "./DonorCallsModal.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import { isApprovedOpenPipelineRow, filterRows } from "../lib/donorRows.js";
 import { moneyCr } from "../lib/format.js";
@@ -145,7 +146,9 @@ function TypeFilterPills({ label, options, selected, onToggle }) {
 // donors — joined with ", " when a donor has more than one of any of
 // these. Each donor's full list of underlying donors is kept as `donors`
 // so the drilldown modal can show fiscal-year splits, months, and
-// per-deal engagement type without a second network call.
+// per-deal engagement type without a second network call. `accountIds` are
+// the Bigin company id(s) behind the donor — used to look up its Remarks
+// (Bigin Notes).
 function buildDonorHistory(table) {
   const byAccount = {};
   for (const row of table) {
@@ -158,6 +161,7 @@ function buildDonorHistory(table) {
         kams: new Set(),
         spocs: new Set(),
         platforms: new Set(),
+        accountIds: new Set(),
         donors: [],
       };
     }
@@ -173,6 +177,7 @@ function buildDonorHistory(table) {
     if (row.kam && row.kam !== "Unspecified") entry.kams.add(row.kam);
     if (row.spoc && row.spoc !== "Unspecified") entry.spocs.add(row.spoc);
     if (row.platform && row.platform !== "Unspecified") entry.platforms.add(row.platform);
+    if (row.accountId) entry.accountIds.add(row.accountId);
     entry.donors.push(row);
   }
 
@@ -184,6 +189,7 @@ function buildDonorHistory(table) {
       kam: [...d.kams].join(", ") || "—",
       spoc: [...d.spocs].join(", ") || "—",
       platform: [...d.platforms].join(", ") || "—",
+      accountIds: [...d.accountIds],
       donors: d.donors,
     }))
     .sort((a, b) => b.totalAmount - a.totalAmount);
@@ -249,6 +255,20 @@ export default function CRMOverview() {
   const [platformOptions, setPlatformOptions] = useState([]);
   const [selectedPlatforms, setSelectedPlatforms] = useState(null);
 
+  // Donor Remarks = the Bigin Notes on each donor's company record, keyed
+  // by company id. They don't depend on any filter, so they're loaded once.
+  // If Bigin can't provide them (e.g. the Zoho token lacks the notes
+  // permission) `remarksNote` carries a short message for the table.
+  const [remarksById, setRemarksById] = useState({});
+  const [remarksNote, setRemarksNote] = useState(null);
+
+  // Donor Calls = the calls logged in Bigin (Activities -> Calls) about each
+  // donor's company, keyed by company id. Also loaded once, independent of
+  // the filters; `callsNote` carries a message if Bigin couldn't provide them.
+  const [callsById, setCallsById] = useState({});
+  const [callsNote, setCallsNote] = useState(null);
+  const [modalCallsDonor, setModalCallsDonor] = useState(null); // donor whose calls popup is open
+
   // Multi-select: null means nothing picked (FY side = "every year
   // combined", Donor Type side = "every type"). Clicking a card toggles
   // it in/out of the array; clicking the last remaining one resets back
@@ -304,6 +324,26 @@ export default function CRMOverview() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    fetch("/api/crm-analysis/donor-remarks")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((json) => {
+        setRemarksById(json.remarks || {});
+        setRemarksNote(json.error || null);
+      })
+      .catch((e) => setRemarksNote(`Remarks couldn't be loaded (${e.message}).`));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/crm-analysis/donor-calls")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((json) => {
+        setCallsById(json.calls || {});
+        setCallsNote(json.error || null);
+      })
+      .catch((e) => setCallsNote(`Calls couldn't be loaded (${e.message}).`));
+  }, []);
+
   const toggleType = (value) => {
     setSelectedTypes((prev) => {
       const base = prev == null ? typeOptions : prev;
@@ -351,10 +391,18 @@ export default function CRMOverview() {
   // fiscal year, closed + standard pipeline) — not scoped to the
   // currently-selected `fy`, since the point of this table is to search
   // any donor's entire history regardless of which year is picked above.
+  // Each donor also gets its `remarks` (the Bigin Notes on its company
+  // record(s)) and its `calls` (the Bigin calls about it), both newest first.
   const donorHistory = useMemo(() => {
     if (!data) return [];
-    return buildDonorHistory(data.table);
-  }, [data]);
+    return buildDonorHistory(data.table).map((d) => {
+      const remarks = d.accountIds.flatMap((id) => remarksById[id] || []);
+      remarks.sort((a, b) => String(b.createdTime || "").localeCompare(String(a.createdTime || "")));
+      const calls = d.accountIds.flatMap((id) => callsById[id] || []);
+      calls.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+      return { ...d, remarks, calls };
+    });
+  }, [data, remarksById, callsById]);
 
   if (loading && !data) {
     return (
@@ -384,7 +432,7 @@ export default function CRMOverview() {
       <ClearFiltersBar
         active={hasActiveFilters}
         onClear={clearAllFilters}
-        emptyText="No filters applied — showing every fiscal year and donor type"
+        // emptyText="No filters applied — showing every fiscal year and donor type"
         summary={[
           selectedFYs != null ? `FY ${selectedFYs.join(", ")}` : null,
           selectedDonorTypes != null ? `Donor Type: ${selectedDonorTypes.join(", ")}` : null,
@@ -562,7 +610,10 @@ export default function CRMOverview() {
         ref={donorTableRef}
         donors={donorHistory}
         onSelectDonor={setModalDonor}
+        onSelectCalls={setModalCallsDonor}
         onFiltersActiveChange={setTableFiltersActive}
+        remarksNote={remarksNote}
+        callsNote={callsNote}
       />
 
       <DonorDrilldownModal
@@ -578,6 +629,12 @@ export default function CRMOverview() {
         onClose={() => setDrilldown(null)}
         title={drilldown?.title}
         donors={drilldown?.rows || []}
+      />
+
+      <DonorCallsModal
+        open={!!modalCallsDonor}
+        onClose={() => setModalCallsDonor(null)}
+        donor={modalCallsDonor}
       />
 
       <DonorHistoryModal

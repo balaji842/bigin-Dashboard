@@ -56,6 +56,105 @@ function DonorTypeBadge({ donorType }) {
   );
 }
 
+// ---------------------------------------------------------------- remarks
+// Remarks are the donor's Bigin Notes (newest first), each
+// { title, content, createdTime, author }, attached to the donor row as
+// `remarks` by the Overview page.
+
+// One note as plain text: "Title — content" (either part may be empty).
+const noteText = (n) =>
+  [n.title, n.content]
+    .map((x) => String(x || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" — ");
+
+function formatNoteDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// For search: every note's text joined together.
+const remarksSearchText = (d) => (d.remarks || []).map(noteText).join(" ");
+
+// For Excel: every note, newest first — "[12 Oct 2026] Title — content | [..] .."
+const remarksForExport = (d) =>
+  (d.remarks || [])
+    .map((n) => {
+      const date = formatNoteDate(n.createdTime);
+      return `${date ? `[${date}] ` : ""}${noteText(n)}`;
+    })
+    .join(" | ");
+
+const POPUP_NOTES = 5; // how many notes the hover popup lists
+const POPUP_NOTE_CHARS = 220; // long notes are cut off in the popup
+
+// Remarks cell: the latest note on one line (cut off with "…" when it
+// doesn't fit), plus a small "+N" when there are older notes. Hovering
+// opens a popup with the notes, newest first. The popup is `fixed`, so
+// the table's horizontal scroll can't clip it.
+function RemarksCell({ notes }) {
+  const [tip, setTip] = useState(null);
+  if (!notes || notes.length === 0) return <span className="text-slate-300">—</span>;
+
+  const latest = noteText(notes[0]) || "(empty note)";
+  const shown = notes.slice(0, POPUP_NOTES);
+  const hidden = notes.length - shown.length;
+
+  const show = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const estHeight = 56 + shown.length * 78;
+    const fitsBelow = rect.bottom + estHeight + 12 < window.innerHeight;
+    setTip({
+      left: Math.min(Math.max(rect.left + rect.width / 2, 170), window.innerWidth - 170),
+      top: fitsBelow ? rect.bottom + 6 : undefined,
+      bottom: fitsBelow ? undefined : window.innerHeight - rect.top + 6,
+    });
+  };
+
+  return (
+    <span className="flex items-center gap-2 max-w-[260px]" onMouseEnter={show} onMouseLeave={() => setTip(null)}>
+      <span className="truncate cursor-help text-slate-700">{latest}</span>
+      {notes.length > 1 && (
+        <span className="shrink-0 text-[10px] font-semibold bg-slate-100 text-slate-500 rounded-full px-1.5 py-0.5">
+          +{notes.length - 1}
+        </span>
+      )}
+      {tip && (
+        <span
+          className="fixed z-50 w-80 bg-white rounded-xl border border-slate-200 shadow-lg p-3 text-left pointer-events-none block"
+          style={{ left: tip.left, top: tip.top, bottom: tip.bottom, transform: "translateX(-50%)" }}
+        >
+          <span className="block text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-2">
+            Remarks · {notes.length} {notes.length === 1 ? "note" : "notes"}
+          </span>
+          {shown.map((n, i) => {
+            const body = (n.content || "").replace(/\s+/g, " ").trim();
+            return (
+              <span key={i} className={`block text-xs ${i > 0 ? "border-t border-slate-100 mt-2 pt-2" : ""}`}>
+                <span className="block text-[10px] text-slate-400 mb-0.5">
+                  {[formatNoteDate(n.createdTime), n.author].filter(Boolean).join(" · ")}
+                </span>
+                {n.title && <span className="block font-semibold text-navy-900">{n.title}</span>}
+                {body && (
+                  <span className="block text-slate-600 break-words">
+                    {body.length > POPUP_NOTE_CHARS ? `${body.slice(0, POPUP_NOTE_CHARS)}…` : body}
+                  </span>
+                )}
+              </span>
+            );
+          })}
+          {hidden > 0 && (
+            <span className="block text-[11px] text-slate-400 border-t border-slate-100 mt-2 pt-2">
+              and {hidden} earlier {hidden === 1 ? "note" : "notes"}
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 const PAGE_SIZE = 10;
 
 const EMPTY_FILTERS = { donorType: null, kam: null, spoc: null, platform: null };
@@ -66,7 +165,11 @@ const EMPTY_FILTERS = { donorType: null, kam: null, spoc: null, platform: null }
 // that bar didn't previously notice or clear them. onFiltersActiveChange
 // reports outward whenever they change, so the parent's bar can light
 // up even though the filtering itself still happens in here.
-const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSelectDonor, onFiltersActiveChange }, ref) {
+// `remarksNote` / `callsNote` (optional) are short messages shown under the
+// title when the Remarks / Calls couldn't be loaded from Bigin.
+// `onSelectCalls(donor)` opens the popup with that donor's calls (each
+// donor row carries its `calls`, newest first).
+const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSelectDonor, onSelectCalls, onFiltersActiveChange, remarksNote, callsNote }, ref) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -112,12 +215,12 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       // Search the donor's name AND the columns actually shown next to
-      // it (Donor Type, KAM, SPOC, Platform) — not just the name — so
-      // typing a Donor Type like "corporate" finds every donor with
-      // that badge, not only ones whose literal name happens to
-      // contain the word.
+      // it (Donor Type, KAM, SPOC, Platform, Remarks) — not just the
+      // name — so typing a Donor Type like "corporate" finds every donor
+      // with that badge, and typing a word from a note finds the donors
+      // whose Remarks mention it.
       out = out.filter((d) => {
-        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""} ${d.platform || ""}`.toLowerCase();
+        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""} ${d.platform || ""} ${remarksSearchText(d)}`.toLowerCase();
         return hay.includes(q);
       });
     }
@@ -164,8 +267,8 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
   const handleExport = () => {
     downloadCsv(
       "donor-history.csv",
-      ["S.No", "Donor Name", "Total Amount", "Donor Type", "Platform", "KAM", "SPOC"],
-      filtered.map((d, i) => [i + 1, d.account, d.totalAmount, d.donorType, d.platform, d.kam, d.spoc])
+      ["S.No", "Donor Name", "Total Amount", "Donor Type", "Platform", "KAM", "SPOC", "Remarks", "Calls"],
+      filtered.map((d, i) => [i + 1, d.account, d.totalAmount, d.donorType, d.platform, d.kam, d.spoc, remarksForExport(d), (d.calls || []).length])
     );
   };
 
@@ -175,6 +278,8 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
         <div>
           <p className="font-display font-bold text-navy-900 text-lg">Donor History</p>
           <p className="text-sm text-slate-400">List of donors and their contribution details</p>
+          {remarksNote && <p className="text-xs text-amber-600 mt-1">{remarksNote}</p>}
+          {callsNote && <p className="text-xs text-amber-600 mt-1">{callsNote}</p>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <ExportButton onClick={handleExport} disabled={filtered.length === 0} />
@@ -183,7 +288,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
             <input
               value={search}
               onChange={(e) => updateSearch(e.target.value)}
-              placeholder="Search name, donor type, KAM or SPOC..."
+              placeholder="Search name, donor type, KAM, SPOC or remarks..."
               className="pl-9 pr-3 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-pink-400/60 focus:border-pink-400 w-56"
             />
           </div>
@@ -191,7 +296,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[720px]">
+        <table className="w-full text-sm min-w-[1060px]">
           <thead>
             <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
               <th className="px-5 py-3 font-semibold">S.No</th>
@@ -245,6 +350,8 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
                   onClearAll={clearAll("spoc")}
                 />
               </th>
+              <th className="px-5 py-3 font-semibold">Remarks</th>
+              <th className="px-5 py-3 font-semibold text-center">Calls</th>
             </tr>
           </thead>
           <tbody>
@@ -269,11 +376,28 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.platform}</td>
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.kam}</td>
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.spoc}</td>
+                <td className="px-5 py-3">
+                  <RemarksCell notes={d.remarks} />
+                </td>
+                <td className="px-5 py-3 text-center whitespace-nowrap">
+                  {(d.calls || []).length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onSelectCalls?.(d)}
+                      className="font-semibold text-emerald-600 underline hover:text-emerald-700"
+                      title="See the calls logged for this donor"
+                    >
+                      {d.calls.length}
+                    </button>
+                  ) : (
+                    <span className="text-slate-300">0</span>
+                  )}
+                </td>
               </tr>
             ))}
             {pageRows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-5 py-8 text-center text-slate-400 text-sm">
+                <td colSpan={9} className="px-5 py-8 text-center text-slate-400 text-sm">
                   No donors match your search.
                 </td>
               </tr>
