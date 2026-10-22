@@ -441,7 +441,7 @@ export default function AIChatbot() {
 
   return (
     <>
-      {!isOpen && (
+      {/* {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
           className="fixed bottom-6 right-6 z-[9999] w-16 h-16 rounded-full bg-gradient-to-r from-pink-500 to-purple-500 text-white text-2xl shadow-xl hover:scale-105 transition-transform flex items-center justify-center"
@@ -449,7 +449,7 @@ export default function AIChatbot() {
         >
           🤖
         </button>
-      )}
+      )} */}
 
       {isOpen && (
         <div

@@ -4,6 +4,9 @@ import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
+import DonorCallsModal from "./DonorCallsModal.jsx";
+import { RemarksCell, CallsCell, ExtrasNote, remarksForExport } from "./DonorExtras.jsx";
+import { useDonorExtras } from "../lib/useDonorExtras.js";
 
 // Overall Comparison — every donor against EVERY financial year at once.
 //
@@ -11,18 +14,38 @@ import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
 // both multi-select pills like the Type filter on the other pages.
 // Table: one row per donor, and for each selected financial year that
 // year's Amount and Conversion Month(s) (hover the months for the amount
-// split by month, as on the Engagement Status page).
+// split by month, as on the Engagement Status page). The last two columns
+// are the donor's Remarks (Bigin Notes) and Calls (Bigin Activities ->
+// Calls), matched by the donor's Bigin company id.
+//
+// Donor-level columns, as on the Engagement Status page: Platform, SPOC, KAM
+// and Donor Type (each with its own column filter), and for every financial
+// year a "Type of Engagement" column — the Type(s) the donor gave in that
+// year (Cash, Kind, School Engagement), next to that year's Amount.
 //
 // Category (A / B / C) here is based on the donor's CUMULATIVE amount
 // across ALL financial years (every Type) — A above ₹1 Cr, B ₹50 L to
 // ₹1 Cr, C below ₹50 L. It is calculated on the server and is never
 // changed by the filters on this page.
 //
-// Engagement Status DOES follow the filters. The latest selected financial
-// year is the "current" one: a donor is Engaged if they gave in it, and
-// Not Engaged if they gave in an earlier selected year but not in it.
-// (With a single year selected, everyone listed is Engaged.) It's worked
-// out from the amounts shown in the table, so the Type filter counts too.
+// Engagement Status DOES follow the filters, and compares the selected
+// financial years: the latest selected year is the "current" one and every
+// earlier selected year is "history".
+//   - Engaged:     gave in EVERY selected year (all the earlier ones AND the
+//                  latest). So every Engaged row has an amount in each
+//                  selected year's column.
+//   - Not Engaged: gave in an earlier selected year but not in every
+//                  selected year — either they stopped (nothing in the
+//                  latest year) or there's a gap in an earlier year.
+//   - "—":         gave only in the latest year (nothing earlier to compare
+//                  with), or only one year is selected.
+// With two years (e.g. 2022-23 + 2026-27) that's simply "gave in both" vs
+// "gave in 2022-23 only". It's worked out from the amounts shown in the
+// table, so the Type filter counts too.
+//
+// Summary Card: the amount and unique donors for the earlier selected years
+// combined and for the latest selected year — from the same donors the
+// table lists, so it follows every filter.
 
 const SNO_W = 56;
 const DONOR_W = 240;
@@ -100,7 +123,9 @@ function PillFilter({ label, options, selected, onToggle }) {
   );
 }
 
-function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll }) {
+// `onSelectAll` ticks everything again (no filter); `onClearAll` unticks
+// everything so you can then tick just the few you want.
+function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll, onClearAll }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -113,6 +138,7 @@ function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll }) {
   }, []);
 
   const allSelected = selected == null;
+  const noneSelected = selected != null && selected.length === 0;
 
   return (
     <span className="relative inline-flex items-center gap-1" ref={ref}>
@@ -128,16 +154,23 @@ function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll }) {
 
       {open && (
         <div
-          className="absolute z-30 top-full mt-1 left-1/2 -translate-x-1/2 w-44 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden text-left normal-case"
+          className="absolute z-30 top-full mt-1 left-1/2 -translate-x-1/2 w-56 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden text-left normal-case"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50 border-b border-slate-100">
+          <div className="flex items-center justify-between gap-3 px-2.5 py-1.5 bg-slate-50 border-b border-slate-100">
             <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Filter</p>
-            {!allSelected && (
-              <button type="button" onClick={onSelectAll} className="text-[11px] font-semibold text-indigo-600 hover:underline">
-                Select all
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {!allSelected && (
+                <button type="button" onClick={onSelectAll} className="text-[11px] font-semibold text-indigo-600 hover:underline">
+                  Select all
+                </button>
+              )}
+              {onClearAll && !noneSelected && (
+                <button type="button" onClick={onClearAll} className="text-[11px] font-semibold text-indigo-600 hover:underline">
+                  Clear all
+                </button>
+              )}
+            </div>
           </div>
           <div className="max-h-48 overflow-y-auto py-1">
             {options.map((opt) => {
@@ -208,6 +241,20 @@ function monthSplit(deals) {
     totals[m] += d.amount || 0;
   }
   return order.map((m) => ({ month: m, amount: totals[m] }));
+}
+
+// The Type(s) of Engagement a donor gave in one financial year, in the
+// usual order — "Cash", or "Cash, Kind" when they gave more than one Type
+// that year. (Deals of Types switched off in the Type filter aren't here.)
+function typesText(deals) {
+  const present = [...new Set(deals.map((d) => d.type).filter((t) => t && t !== "Unspecified"))];
+  return present
+    .sort((a, b) => {
+      const ia = TYPE_ORDER.indexOf(a);
+      const ib = TYPE_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+    })
+    .join(", ");
 }
 
 // Export format: "March - 90000, April - 80000, May - 70000".
@@ -284,15 +331,69 @@ function CategoryBadge({ value }) {
   );
 }
 
-function EngagementPill({ engaged }) {
-  return engaged ? (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold whitespace-nowrap">
-      <IconCheckCircle className="w-3.5 h-3.5" /> Engaged
+const DONOR_TYPE_COLORS = {
+  Corporate: "bg-emerald-50 text-emerald-700",
+  Individual: "bg-blue-50 text-blue-700",
+  Business: "bg-indigo-50 text-indigo-700",
+  NGO: "bg-amber-50 text-amber-700",
+};
+function DonorTypeBadge({ value }) {
+  if (!value) return <span className="text-slate-300">—</span>;
+  const cls = DONOR_TYPE_COLORS[value] || "bg-slate-100 text-slate-600";
+  return <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cls}`}>{value}</span>;
+}
+
+function EngagementPill({ status }) {
+  if (status === "Engaged") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold whitespace-nowrap">
+        <IconCheckCircle className="w-3.5 h-3.5" /> Engaged
+      </span>
+    );
+  }
+  if (status === "Not Engaged") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-50 text-red-600 text-xs font-semibold whitespace-nowrap">
+        <IconXCircle className="w-3.5 h-3.5" /> Not Engaged
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-slate-300 cursor-help"
+      title="Nothing to compare: this donor didn't give in an earlier selected year (or only one year is selected)."
+    >
+      —
     </span>
-  ) : (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-50 text-red-600 text-xs font-semibold whitespace-nowrap">
-      <IconXCircle className="w-3.5 h-3.5" /> Not Engaged
-    </span>
+  );
+}
+
+function ChartIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={props.className}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 20V10M12 20V4M19 20v-7" />
+    </svg>
+  );
+}
+
+// One figure in the Summary Card: an amount and its unique donors.
+function SummaryStat({ label, sub, amount, donors, tone, empty }) {
+  const color = { navy: "text-navy-700", emerald: "text-emerald-600", pink: "text-pink-600" }[tone];
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 min-w-0">
+      <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">{label}</p>
+      <p className="text-[11px] text-slate-400 mt-0.5 truncate" title={sub}>
+        {sub}
+      </p>
+      {empty ? (
+        <p className="font-display text-2xl font-bold text-slate-300 mt-2">—</p>
+      ) : (
+        <>
+          <p className={`font-display text-2xl font-bold mt-2 ${color}`}>{moneyAutoScale(amount)}</p>
+          <p className="text-xs text-slate-400 mt-1">{donors} donors</p>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -316,11 +417,19 @@ export default function OverallComparisonModule() {
   const [selectedTypes, setSelectedTypes] = useState(null); // null = every Type
   const [categoryFilter, setCategoryFilter] = useState(null); // null = every category
   const [engagementFilter, setEngagementFilter] = useState(null); // null = Engaged + Not Engaged
+  // Column filters for the donor-level columns (null = every value).
+  const [attrFilters, setAttrFilters] = useState({ platform: null, spoc: null, kam: null, donorType: null });
   const [search, setSearch] = useState("");
   const [sortColumn, setSortColumn] = useState(null); // "total" | "fy:<year>" | null
   const [sortDir, setSortDir] = useState(null);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [page, setPage] = useState(0);
+
+  // Remarks (Bigin Notes) and Calls (Bigin Activities -> Calls) per donor,
+  // shown as the last two columns of the table (matched by the donor's
+  // Bigin company id), and the donor whose Calls popup is open.
+  const { remarksById, remarksNote, callsById, callsNote } = useDonorExtras();
+  const [callsDonor, setCallsDonor] = useState(null); // { account, calls } | null
 
   useEffect(() => {
     fetch("/api/crm-analysis/overall-comparison")
@@ -362,6 +471,7 @@ export default function OverallComparisonModule() {
     const yearSet = new Set(shownYears);
     const typeSet = selectedTypes ? new Set(selectedTypes) : null;
     const latestYear = shownYears[shownYears.length - 1]; // the "current" year for Engagement Status
+    const earlierYears = shownYears.slice(0, -1); // the years it's compared against
     const out = [];
     for (const d of data.rows) {
       const perYear = {};
@@ -377,10 +487,21 @@ export default function OverallComparisonModule() {
       if (any) {
         out.push({
           account: d.account,
+          accountId: d.accountId, // the Bigin company id — links the donor to its Remarks and Calls
           category: d.category,
+          platform: d.platform,
+          spoc: d.spoc,
+          kam: d.kam,
+          donorType: d.donorType,
           total: d.total,
           perYear,
-          engaged: Boolean(perYear[latestYear]), // gave in the latest selected year
+          // null when there's nothing earlier to compare with; "Engaged" only
+          // when the donor gave in every selected year; otherwise "Not Engaged".
+          status: earlierYears.some((y) => perYear[y])
+            ? earlierYears.every((y) => perYear[y]) && perYear[latestYear]
+              ? "Engaged"
+              : "Not Engaged"
+            : null,
         });
       }
     }
@@ -391,6 +512,35 @@ export default function OverallComparisonModule() {
     const present = new Set(view.map((r) => r.category || "—"));
     return ["A", "B", "C", "—"].filter((c) => present.has(c));
   }, [view]);
+
+  // The values each donor-level column filter offers: whatever the donors
+  // currently in `view` have.
+  const attrOptions = useMemo(() => {
+    const out = { platform: [], spoc: [], kam: [], donorType: [] };
+    for (const key of Object.keys(out)) {
+      out[key] = [...new Set(view.map((r) => r[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    }
+    return out;
+  }, [view]);
+
+  const toggleAttr = (key) => (value) =>
+    setAttrFilters((prev) => {
+      const all = attrOptions[key];
+      const current = prev[key];
+      const base = current == null ? all : current;
+      const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      const resolved = next.length === 0 ? current : next.length === all.length ? null : next;
+      return { ...prev, [key]: resolved };
+    });
+  const clearAttr = (key) => () => setAttrFilters((prev) => ({ ...prev, [key]: null }));
+  const attrFilterProps = (key, label) => ({
+    label,
+    options: attrOptions[key],
+    selected: attrFilters[key],
+    onToggle: toggleAttr(key),
+    onSelectAll: clearAttr(key),
+    onClearAll: () => setAttrFilters((prev) => ({ ...prev, [key]: [] })),
+  });
 
   const toggleEngagement = toggleIn(setEngagementFilter, ENGAGEMENT_OPTIONS);
 
@@ -415,7 +565,10 @@ export default function OverallComparisonModule() {
     let out = view.filter((r) => {
       if (q && !r.account.toLowerCase().includes(q)) return false;
       if (categoryFilter != null && !categoryFilter.includes(r.category || "—")) return false;
-      if (engagementFilter != null && !engagementFilter.includes(r.engaged ? "Engaged" : "Not Engaged")) return false;
+      if (engagementFilter != null && !engagementFilter.includes(r.status)) return false;
+      for (const key of ["platform", "spoc", "kam", "donorType"]) {
+        if (attrFilters[key] != null && !attrFilters[key].includes(r[key])) return false;
+      }
       return true;
     });
     if (sortColumn && sortDir) {
@@ -430,12 +583,12 @@ export default function OverallComparisonModule() {
       });
     }
     return out;
-  }, [view, search, categoryFilter, engagementFilter, sortColumn, sortDir]);
+  }, [view, search, categoryFilter, engagementFilter, attrFilters, sortColumn, sortDir]);
 
   // Back to the first page whenever what's listed changes.
   useEffect(() => {
     setPage(0);
-  }, [search, selectedYears, selectedTypes, categoryFilter, engagementFilter, sortColumn, sortDir, rowsPerPage]);
+  }, [search, selectedYears, selectedTypes, categoryFilter, engagementFilter, attrFilters, sortColumn, sortDir, rowsPerPage]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / rowsPerPage));
   const safePage = Math.min(page, totalPages - 1);
@@ -445,7 +598,9 @@ export default function OverallComparisonModule() {
   const pageNumbers = [];
   for (let i = windowStart; i < Math.min(totalPages, windowStart + 5); i++) pageNumbers.push(i);
 
-  const engagedCount = useMemo(() => rows.filter((r) => r.engaged).length, [rows]);
+  const engagedCount = useMemo(() => rows.filter((r) => r.status === "Engaged").length, [rows]);
+  const notEngagedCount = useMemo(() => rows.filter((r) => r.status === "Not Engaged").length, [rows]);
+  const notComparedCount = rows.length - engagedCount - notEngagedCount;
 
   // Summary cards: for each financial year on screen, the amount and the
   // number of donors who gave in it — worked out from `rows`, i.e. from
@@ -474,11 +629,38 @@ export default function OverallComparisonModule() {
     [rows, shownYears]
   );
 
+  // Summary Card: amount + unique donors for the earlier selected years
+  // combined and for the latest selected year — from `rows` (the donors the
+  // table lists after every filter). A donor who gave in several of the
+  // combined years counts once.
+  const summary = useMemo(() => {
+    const latest = shownYears[shownYears.length - 1];
+    const earlier = shownYears.slice(0, -1);
+    const totalFor = (years) => {
+      let amount = 0;
+      let donors = 0;
+      for (const r of rows) {
+        let gave = false;
+        for (const y of years) {
+          const cell = r.perYear[y];
+          if (cell) {
+            amount += cell.amount;
+            gave = true;
+          }
+        }
+        if (gave) donors += 1;
+      }
+      return { amount, donors };
+    };
+    return { latest, earlier, previous: totalFor(earlier), current: totalFor([latest]) };
+  }, [rows, shownYears]);
+
   const hasActiveFilters =
     selectedYears != null ||
     selectedTypes != null ||
     categoryFilter != null ||
     engagementFilter != null ||
+    Object.values(attrFilters).some((v) => v != null) ||
     search.trim() !== "" ||
     sortColumn != null;
   const clearAllFilters = () => {
@@ -486,6 +668,7 @@ export default function OverallComparisonModule() {
     setSelectedTypes(null);
     setCategoryFilter(null);
     setEngagementFilter(null);
+    setAttrFilters({ platform: null, spoc: null, kam: null, donorType: null });
     setSearch("");
     setSortColumn(null);
     setSortDir(null);
@@ -493,8 +676,12 @@ export default function OverallComparisonModule() {
   const filterSummary = [
     selectedYears != null ? `Financial years: ${[...selectedYears].sort().join(", ")}` : null,
     selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
-    categoryFilter != null ? `Category: ${categoryFilter.join(", ")}` : null,
-    engagementFilter != null ? `Engagement: ${engagementFilter.join(", ")}` : null,
+    categoryFilter != null ? `Category: ${categoryFilter.join(", ") || "none"}` : null,
+    engagementFilter != null ? `Engagement: ${engagementFilter.join(", ") || "none"}` : null,
+    attrFilters.platform != null ? `Platform: ${attrFilters.platform.join(", ") || "none"}` : null,
+    attrFilters.spoc != null ? `SPOC: ${attrFilters.spoc.join(", ") || "none"}` : null,
+    attrFilters.kam != null ? `KAM: ${attrFilters.kam.join(", ") || "none"}` : null,
+    attrFilters.donorType != null ? `Donor Type: ${attrFilters.donorType.join(", ") || "none"}` : null,
     search.trim() !== "" ? `Search: "${search.trim()}"` : null,
     sortColumn != null ? "Sorted" : null,
   ]
@@ -505,17 +692,64 @@ export default function OverallComparisonModule() {
 
   const filterBar = (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <FunnelIcon className="w-5 h-5 text-indigo-600" />
+        <p className="font-display font-bold text-navy-900">Filters</p>
+      </div>
       <PillFilter label="Financial year" options={allYears} selected={selectedYears} onToggle={toggleYear} />
       <PillFilter label="Type" options={allTypes} selected={selectedTypes} onToggle={toggleType} />
-        {/* <p className="text-[11px] text-slate-400">
-          Category is based on each donor's cumulative amount across all financial years (all Types): A above ₹1 Cr ·
-          B ₹50 L to ₹1 Cr · C below ₹50 L. These filters don't change it.
-        </p>
-        <p className="text-[11px] text-slate-400">
-          Engagement Status follows the financial years you pick: <span className="font-semibold text-slate-500">Engaged</span> = gave in
-          FY {latestShownYear} (the latest selected year); <span className="font-semibold text-slate-500">Not Engaged</span> = gave in an
-          earlier selected year but not in FY {latestShownYear}.
-        </p> */}
+      {/* <p className="text-[11px] text-slate-400">
+        Category is based on each donor's cumulative amount across all financial years (all Types): A above ₹1 Cr ·
+        B ₹50 L to ₹1 Cr · C below ₹50 L. These filters don't change it.
+      </p>
+      <p className="text-[11px] text-slate-400">
+        {shownYears.length < 2 ? (
+          <>Engagement Status compares financial years — select two or more years to see it.</>
+        ) : shownYears.length === 2 ? (
+          <>
+            Engagement Status compares FY {shownYears[0]} with FY {latestShownYear}:{" "}
+            <span className="font-semibold text-slate-500">Engaged</span> = gave in both;{" "}
+            <span className="font-semibold text-slate-500">Not Engaged</span> = gave in FY {shownYears[0]} but not in FY{" "}
+            {latestShownYear}. Donors who only gave in FY {latestShownYear} show — (nothing to compare).
+          </>
+        ) : (
+          <>
+            Engagement Status compares the selected years (FY {shownYears[0]} to FY {latestShownYear}):{" "}
+            <span className="font-semibold text-slate-500">Engaged</span> = gave in every selected year;{" "}
+            <span className="font-semibold text-slate-500">Not Engaged</span> = gave in an earlier selected year but not in every
+            selected year. Donors who only gave in FY {latestShownYear} show — (nothing to compare).
+          </>
+        )}
+      </p> */}
+    </div>
+  );
+
+  const summaryCard = (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex flex-col">
+      <div className="flex items-center gap-2 mb-3">
+        <ChartIcon className="w-5 h-5 text-indigo-600" />
+        <p className="font-display font-bold text-navy-900">Summary Card</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <SummaryStat
+          label="Previous financial years"
+          sub={summary.earlier.length > 0 ? `FY ${summary.earlier.join(", ")}` : "No earlier year selected"}
+          amount={summary.previous.amount}
+          donors={summary.previous.donors}
+          tone="navy"
+          empty={summary.earlier.length === 0}
+        />
+        <SummaryStat
+          label="This financial year"
+          sub={`FY ${summary.latest}`}
+          amount={summary.current.amount}
+          donors={summary.current.donors}
+          tone="emerald"
+        />
+      </div>
+      {/* <p className="text-[11px] text-slate-400 mt-3">
+        Follows every filter above and the table's search and column filters. A donor who gave in several of the combined years counts once.
+      </p> */}
     </div>
   );
 
@@ -543,27 +777,42 @@ export default function OverallComparisonModule() {
       [
         "Donor Name",
         "Category",
+        "Platform",
+        "SPOC",
         "Engagement Status",
-        ...shownYears.flatMap((y) => [`FY ${y} Amount`, `FY ${y} Conversion Month`]),
+        ...shownYears.flatMap((y) => [`FY ${y} Amount`, `FY ${y} Type of Engagement`, `FY ${y} Conversion Month`]),
         "All-years total",
+        "KAM",
+        "Donor Type",
+        "Remarks",
+        "Calls",
       ],
       rows.map((r) => [
         r.account,
         r.category || "",
-        r.engaged ? "Engaged" : "Not Engaged",
+        r.platform || "",
+        r.spoc || "",
+        r.status || "",
         ...shownYears.flatMap((y) => {
           const cell = r.perYear[y];
           // Every month with its amount: "March - 90000, April - 80000"
-          return [cell ? cell.amount : "", cell ? monthsWithAmounts(cell.deals) : ""];
+          return [cell ? cell.amount : "", cell ? typesText(cell.deals) : "", cell ? monthsWithAmounts(cell.deals) : ""];
         }),
         r.total,
+        r.kam || "",
+        r.donorType || "",
+        remarksForExport(remarksById[r.accountId]),
+        (callsById[r.accountId] || []).length,
       ])
     );
 
   return (
     <div className="space-y-5 sm:space-y-6">
       <ClearFiltersBar active={hasActiveFilters} summary={filterSummary} onClear={clearAllFilters} />
-      {filterBar}
+      <div className="grid gap-4 lg:grid-cols-2 items-stretch">
+        {filterBar}
+        {summaryCard}
+      </div>
 
       {/* One card per financial year on screen: that year's total amount and
           the donors who gave in it, under the filters currently applied. */}
@@ -572,7 +821,7 @@ export default function OverallComparisonModule() {
           <div key={c.year} className="rounded-2xl border border-slate-100 bg-white shadow-sm p-5">
             <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-2">FY {c.year}</p>
             <p className="font-display text-2xl font-bold text-emerald-600">{moneyAutoScale(c.amount)}</p>
-            <p className="text-xs text-slate-400 mt-1">{c.donors} unique donors</p>
+            <p className="text-xs text-slate-400 mt-1">{c.donors} donors</p>
           </div>
         ))}
       </div>
@@ -585,6 +834,8 @@ export default function OverallComparisonModule() {
           </div>
           <ExportButton onClick={exportCsv} disabled={rows.length === 0} />
         </div>
+
+        <ExtrasNote remarksNote={remarksNote} callsNote={callsNote} className="px-5 py-2 border-b border-slate-100" />
 
         <div className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100">
           <label className="relative block sm:w-72">
@@ -599,13 +850,19 @@ export default function OverallComparisonModule() {
           <p className="text-xs text-slate-400">
             <span className="font-semibold text-navy-900">{rows.length}</span> donors ·{" "}
             <span className="font-semibold text-emerald-600">{engagedCount}</span> engaged ·{" "}
-            <span className="font-semibold text-red-500">{rows.length - engagedCount}</span> not engaged · selected years total{" "}
+            <span className="font-semibold text-red-500">{notEngagedCount}</span> not engaged ·{" "}
+            {notComparedCount > 0 && (
+              <>
+                <span className="font-semibold text-slate-500">{notComparedCount}</span> not compared ·{" "}
+              </>
+            )}
+            selected years total{" "}
             <span className="font-semibold text-navy-900">{moneyAutoScale(shownTotal)}</span>
           </p>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: 660 + shownYears.length * 380 }}>
+          <table className="w-full text-sm" style={{ minWidth: 1520 + shownYears.length * 520 }}>
             <thead>
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th
@@ -636,12 +893,25 @@ export default function OverallComparisonModule() {
                     selected={categoryFilter}
                     onToggle={toggleCategory}
                     onSelectAll={() => setCategoryFilter(null)}
+                    onClearAll={() => setCategoryFilter([])}
                   />
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <ColumnFilterMenu {...attrFilterProps("platform", "Platform")} />
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <ColumnFilterMenu {...attrFilterProps("spoc", "SPOC")} />
                 </th>
                 <th
                   rowSpan={2}
                   className="px-3 py-2.5 font-semibold align-middle"
-                  title={`Engaged = gave in FY ${latestShownYear}, the latest selected year. Not Engaged = gave in an earlier selected year but not in FY ${latestShownYear}.`}
+                  title={
+                    shownYears.length < 2
+                      ? "Select two or more financial years to compare."
+                      : shownYears.length === 2
+                      ? `Engaged = gave in both FY ${shownYears[0]} and FY ${latestShownYear}. Not Engaged = gave in FY ${shownYears[0]} but not in FY ${latestShownYear}. — = only gave in FY ${latestShownYear}.`
+                      : `Engaged = gave in every selected year. Not Engaged = gave in an earlier selected year but not in every selected year. — = only gave in FY ${latestShownYear}.`
+                  }
                 >
                   <ColumnFilterMenu
                     label="Engagement Status"
@@ -649,10 +919,11 @@ export default function OverallComparisonModule() {
                     selected={engagementFilter}
                     onToggle={toggleEngagement}
                     onSelectAll={() => setEngagementFilter(null)}
+                    onClearAll={() => setEngagementFilter([])}
                   />
                 </th>
                 {shownYears.map((y) => (
-                  <th key={y} colSpan={2} className="px-3 py-2.5 font-semibold border-l border-slate-100">
+                  <th key={y} colSpan={3} className="px-3 py-2.5 font-semibold border-l border-slate-100">
                     FY {y}
                   </th>
                 ))}
@@ -667,6 +938,18 @@ export default function OverallComparisonModule() {
                     onSort={setSortFor("total")}
                   />
                 </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">
+                  <ColumnFilterMenu {...attrFilterProps("kam", "KAM")} />
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <ColumnFilterMenu {...attrFilterProps("donorType", "Donor Type")} />
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">
+                  Remarks
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  Calls
+                </th>
               </tr>
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 {shownYears.flatMap((y) => [
@@ -676,6 +959,9 @@ export default function OverallComparisonModule() {
                       sortDir={sortColumn === `fy:${y}` ? sortDir : null}
                       onSort={setSortFor(`fy:${y}`)}
                     />
+                  </th>,
+                  <th key={`${y}-t`} className="px-3 py-2 font-medium">
+                    Type of Engagement
                   </th>,
                   <th key={`${y}-m`} className="px-3 py-2 font-medium">
                     Conversion Month
@@ -711,14 +997,19 @@ export default function OverallComparisonModule() {
                     <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
                       <CategoryBadge value={r.category} />
                     </td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.platform || "—"}</td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.spoc || "—"}</td>
                     <td className="px-3 py-2.5 text-center align-middle">
-                      <EngagementPill engaged={r.engaged} />
+                      <EngagementPill status={r.status} />
                     </td>
                     {shownYears.flatMap((y) => {
                       const cell = r.perYear[y];
                       return [
                         <td key={`${y}-a`} className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
                           {cell ? moneyAutoScale(cell.amount) : <span className="text-slate-300">—</span>}
+                        </td>,
+                        <td key={`${y}-t`} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                          {cell ? typesText(cell.deals) || "—" : <span className="text-slate-300">—</span>}
                         </td>,
                         <td key={`${y}-m`} className="px-3 py-2.5 text-center align-middle">
                           {cell ? <MonthBreakdown deals={cell.deals} /> : <span className="text-slate-300">—</span>}
@@ -728,12 +1019,25 @@ export default function OverallComparisonModule() {
                     <td className="px-3 py-2.5 text-right font-bold text-navy-900 border-l border-slate-100 whitespace-nowrap align-middle">
                       {moneyAutoScale(r.total)}
                     </td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap border-l border-slate-100 align-middle">{r.kam || "—"}</td>
+                    <td className="px-3 py-2.5 text-center align-middle">
+                      <DonorTypeBadge value={r.donorType} />
+                    </td>
+                    <td className="px-3 py-2.5 border-l border-slate-100 align-middle">
+                      <RemarksCell notes={remarksById[r.accountId]} />
+                    </td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                      <CallsCell
+                        calls={callsById[r.accountId]}
+                        onOpen={() => setCallsDonor({ account: r.account, calls: callsById[r.accountId] || [] })}
+                      />
+                    </td>
                   </tr>
                 );
               })}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={5 + shownYears.length * 2} className="px-4 py-8 text-center text-slate-400 text-xs">
+                  <td colSpan={11 + shownYears.length * 3} className="px-4 py-8 text-center text-slate-400 text-xs">
                     No donors match the current filters.
                   </td>
                 </tr>
@@ -796,6 +1100,8 @@ export default function OverallComparisonModule() {
           </div>
         </div>
       </div>
+
+      <DonorCallsModal open={!!callsDonor} onClose={() => setCallsDonor(null)} donor={callsDonor} />
     </div>
   );
 }

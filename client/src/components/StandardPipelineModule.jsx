@@ -5,6 +5,9 @@ import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
+import DonorCallsModal from "./DonorCallsModal.jsx";
+import { RemarksCell, CallsCell, ExtrasNote, remarksSearchText, remarksForExport } from "./DonorExtras.jsx";
+import { useDonorExtras } from "../lib/useDonorExtras.js";
 import { filterRows } from "../lib/donorRows.js";
 
 // Cash / Kind / School Engagement pill filter — same pattern as the
@@ -250,11 +253,23 @@ function toCsvValue(v) {
 }
 
 function downloadPipelineDonorHistoryCsv(rows) {
-  const header = ["S.No", "Name", "Amount", "Expected Month", "Type", "Donor Type", "Platform", "KAM", "SPOC"];
+  const header = ["S.No", "Name", "Amount", "Expected Month", "Type", "Donor Type", "Platform", "KAM", "SPOC", "Remarks", "Calls"];
   const lines = [header.join(",")];
   rows.forEach((r, i) => {
     lines.push(
-      [i + 1, r.account, r.amount, r.expectedMonth || "", r.type, r.donorType, r.platform, r.kam, r.spoc]
+      [
+        i + 1,
+        r.account,
+        r.amount,
+        r.expectedMonth || "",
+        r.type,
+        r.donorType,
+        r.platform,
+        r.kam,
+        r.spoc,
+        remarksForExport(r.remarks),
+        (r.calls || []).length,
+      ]
         .map(toCsvValue)
         .join(",")
     );
@@ -268,11 +283,18 @@ function downloadPipelineDonorHistoryCsv(rows) {
   URL.revokeObjectURL(url);
 }
 
+// Frozen columns: the number column and the Donor Name stay in place while
+// every other column scrolls sideways underneath them.
+const SNO_W = 64;
+const DONOR_W = 240;
+
 const PAGE_SIZE = 10;
 
 // Same "Donor History" table as the Conversion page, but for open
 // pipeline donors — "Month" here is the projected/expected conversion
-// month (a picklist field), not an actual closing date.
+// month (a picklist field), not an actual closing date. Each row also
+// carries the donor's Bigin Remarks (Notes) and Calls, attached to it as
+// `remarks` / `calls` by the page.
 const EMPTY_PIPELINE_DONOR_HISTORY_FILTERS = {
   expectedMonth: null,
   type: null,
@@ -287,7 +309,13 @@ const EMPTY_PIPELINE_DONOR_HISTORY_FILTERS = {
 // otherwise entirely private to this component. onFiltersActiveChange
 // reports outward whenever they change, so that bar can light up even
 // though the filtering itself still happens in here.
-const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle, onFiltersActiveChange }, ref) {
+// `onSelectCalls(row)` opens the popup with that donor's calls;
+// `remarksNote` / `callsNote` are short messages shown when Bigin couldn't
+// provide the Remarks / Calls.
+const DonorHistoryTable = forwardRef(function DonorHistoryTable(
+  { rows, subtitle, onFiltersActiveChange, onSelectCalls, remarksNote, callsNote },
+  ref
+) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
   const [filters, setFilters] = useState(EMPTY_PIPELINE_DONOR_HISTORY_FILTERS);
@@ -341,7 +369,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle
     const q = search.trim().toLowerCase();
     let out = rows.filter((r) => {
       if (q) {
-        const hay = `${r.account} ${r.kam} ${r.spoc}`.toLowerCase();
+        const hay = `${r.account} ${r.kam} ${r.spoc} ${remarksSearchText(r.remarks)}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return (
@@ -385,12 +413,13 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle
         <div>
           <p className="font-display font-bold text-navy-900 text-xl">Donor History</p>
           <p className="text-sm text-slate-400">{subtitle || "A detailed list of donors, their pipeline value and key details."}</p>
+          <ExtrasNote remarksNote={remarksNote} callsNote={callsNote} className="mt-1" />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={search}
             onChange={(e) => updateSearch(e.target.value)}
-            placeholder="Search by name, KAM or SPOC…"
+            placeholder="Search by name, KAM, SPOC or remarks…"
             className="text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-pink-400 w-56"
           />
           <ExportButton onClick={() => downloadPipelineDonorHistoryCsv(filtered)} disabled={filtered.length === 0} />
@@ -399,11 +428,26 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle
 
       <div className="overflow-hidden rounded-xl border border-slate-100">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[920px]">
+          <table className="w-full text-sm min-w-[1200px]">
             <thead>
               <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
-                <th className="px-4 py-3 font-semibold">S.No</th>
-                <th className="px-4 py-3 font-semibold">
+                <th
+                  style={{ position: "sticky", left: 0, width: SNO_W, minWidth: SNO_W, maxWidth: SNO_W }}
+                  className="px-4 py-3 font-semibold bg-navy-900 z-20"
+                >
+                  S.No
+                </th>
+                <th
+                  style={{
+                    position: "sticky",
+                    left: SNO_W,
+                    width: DONOR_W,
+                    minWidth: DONOR_W,
+                    maxWidth: DONOR_W,
+                    boxShadow: "inset -1px 0 0 rgba(255,255,255,0.15)",
+                  }}
+                  className="px-4 py-3 font-semibold bg-navy-900 z-20"
+                >
                   <ColumnSortMenu label="Name" sortDir={sortColumn === "account" ? sortDir : null} onSort={setSortFor("account")} />
                 </th>
                 <th className="px-4 py-3 font-semibold text-right">
@@ -469,13 +513,32 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle
                     onClearAll={clearAll("spoc")}
                   />
                 </th>
+                <th className="px-4 py-3 font-semibold">Remarks</th>
+                <th className="px-4 py-3 font-semibold text-center">Calls</th>
               </tr>
             </thead>
             <tbody>
               {pageRows.map((r, i) => (
                 <tr key={`${r.dealName}-${start + i}`} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                  <td className="px-4 py-3 text-slate-500">{String(start + i + 1).padStart(2, "0")}</td>
-                  <td className="px-4 py-3 text-navy-900 font-medium">{r.account}</td>
+                  <td
+                    style={{ position: "sticky", left: 0, width: SNO_W, minWidth: SNO_W, maxWidth: SNO_W }}
+                    className={`px-4 py-3 text-slate-500 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}
+                  >
+                    {String(start + i + 1).padStart(2, "0")}
+                  </td>
+                  <td
+                    style={{
+                      position: "sticky",
+                      left: SNO_W,
+                      width: DONOR_W,
+                      minWidth: DONOR_W,
+                      maxWidth: DONOR_W,
+                      boxShadow: "inset -1px 0 0 #e2e8f0",
+                    }}
+                    className={`px-4 py-3 text-navy-900 font-medium break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}
+                  >
+                    {r.account}
+                  </td>
                   <td className="px-4 py-3 text-right font-bold text-navy-900 whitespace-nowrap" title={fullMoney(r.amount)}>
                     {moneyForDonorType(r.amount, r.donorType)}
                   </td>
@@ -489,11 +552,17 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ rows, subtitle
                   <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.platform}</td>
                   <td className="px-4 py-3 text-slate-600">{r.kam}</td>
                   <td className="px-4 py-3 text-slate-600">{r.spoc}</td>
+                  <td className="px-4 py-3">
+                    <RemarksCell notes={r.remarks} />
+                  </td>
+                  <td className="px-4 py-3 text-center whitespace-nowrap">
+                    <CallsCell calls={r.calls} onOpen={() => onSelectCalls?.(r)} />
+                  </td>
                 </tr>
               ))}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={11} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No records match your search.
                   </td>
                 </tr>
@@ -565,6 +634,12 @@ export default function StandardPipelineModule() {
   // cards, breakdown table rows, Projected Conversion Month table).
   const [drilldown, setDrilldown] = useState(null); // { title, rows } | null
   const openDrilldown = (title, rows) => setDrilldown({ title, rows });
+
+  // Remarks (Bigin Notes) and Calls (Bigin Activities -> Calls) per donor,
+  // for the two extra columns of the Donor History table; and the donor
+  // whose Calls popup is open.
+  const { remarksById, remarksNote, callsById, callsNote } = useDonorExtras();
+  const [callsDonor, setCallsDonor] = useState(null); // { account, calls } | null
 
   // The Donor History table below manages its own search/column-filter/
   // sort state internally — this tracks whether any of THAT is active,
@@ -663,6 +738,17 @@ export default function StandardPipelineModule() {
     if (!scoped) return [];
     return scoped.monthWise.filter((m) => m.amount !== 0 || m.donors !== 0);
   }, [scoped]);
+
+  // The Donor History rows with each donor's Remarks and Calls attached
+  // (matched by the donor's Bigin company id).
+  const tableRows = useMemo(() => {
+    if (!scoped) return [];
+    return scoped.table.map((r) => ({
+      ...r,
+      remarks: remarksById[r.accountId] || [],
+      calls: callsById[r.accountId] || [],
+    }));
+  }, [scoped, remarksById, callsById]);
 
   const hasActiveFilters = selectedTypes != null || selectedPlatforms != null || scope !== "total" || tableFiltersActive;
   const clearAllFilters = () => {
@@ -850,13 +936,16 @@ export default function StandardPipelineModule() {
 
           <DonorHistoryTable
             ref={donorTableRef}
-            rows={scoped.table}
+            rows={tableRows}
             subtitle={
               scope === "total"
                 ? "A detailed list of donors, their pipeline value and key details."
                 : `Scoped to: ${scoped.label}.`
             }
             onFiltersActiveChange={setTableFiltersActive}
+            onSelectCalls={(r) => setCallsDonor({ account: r.account, calls: r.calls })}
+            remarksNote={remarksNote}
+            callsNote={callsNote}
           />
         </>
       )}
@@ -867,6 +956,8 @@ export default function StandardPipelineModule() {
         title={drilldown?.title}
         donors={drilldown?.rows || []}
       />
+
+      <DonorCallsModal open={!!callsDonor} onClose={() => setCallsDonor(null)} donor={callsDonor} />
     </div>
   );
 }

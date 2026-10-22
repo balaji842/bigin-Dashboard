@@ -66,6 +66,14 @@ export function uniqueDonorKey(deal) {
   return raw || null;
 }
 
+// The Bigin company (Account) id behind a deal, as a string — used to match
+// a donor to its Remarks (Bigin Notes) and Calls. null when the deal has no
+// company record.
+export function accountIdOf(deal) {
+  const raw = deal?.Account_Name;
+  return raw && typeof raw === "object" && raw.id != null ? String(raw.id) : null;
+}
+
 export function uniqueDonorCount(donors) {
   const keys = new Set();
   for (const d of donors) {
@@ -157,7 +165,8 @@ export function monthWiseSummary(donors, dateField = "Closing_Date") {
 //
 // One entry per donor with ALL of their closed deals (fiscal year, month,
 // amount, Type — newest first), so the page can filter by fiscal year /
-// Type and total things up on the client without another request.
+// Type and total things up on the client without another request. Each
+// entry also carries the donor's Platform, SPOC, KAM and Donor Type.
 //
 // `category` is the donor's CUMULATIVE closed total across ALL fiscal
 // years (every Type), run through the usual A / B / C thresholds
@@ -177,25 +186,44 @@ export function buildOverallComparison(closedDonors) {
     const k = String(key);
     let info = byDonor.get(k);
     if (!info) {
-      info = { account: pick(d, "Account_Name"), total: 0, deals: [] };
+      info = { account: pick(d, "Account_Name"), accountId: accountIdOf(d), total: 0, deals: [], attrs: [] };
       byDonor.set(k, info);
     }
     const amount = pickNumber(d, "Amount");
     info.total += amount;
+    const t = d.Closing_Date ? new Date(d.Closing_Date).getTime() || 0 : 0;
     info.deals.push({
       fy,
       month: monthNameOf(d.Closing_Date),
       amount,
       type: pick(d, "Type"),
-      t: d.Closing_Date ? new Date(d.Closing_Date).getTime() || 0 : 0,
+      t,
+    });
+    // The donor-level details (Platform / SPOC / KAM / Donor Type) are
+    // read off the donor's deals below — newest deal first.
+    info.attrs.push({
+      t,
+      platform: pick(d, "Platform"),
+      spoc: pick(d, "Spoc"),
+      kam: pick(d, "Pipeline_KAM"),
+      donorType: pick(d, "Type_of_donor"),
     });
   }
 
   const rows = [...byDonor.values()]
     .map((info) => {
       info.deals.sort((a, b) => b.t - a.t);
+      // Platform / SPOC / KAM / Donor Type: the value on the donor's most
+      // recent deal that actually has one filled in (null if none do).
+      info.attrs.sort((a, b) => b.t - a.t);
+      const known = (key) => info.attrs.map((a) => a[key]).find((v) => v && v !== "Unspecified") || null;
       return {
         account: info.account,
+        accountId: info.accountId,
+        platform: known("platform"),
+        spoc: known("spoc"),
+        kam: known("kam"),
+        donorType: known("donorType"),
         total: info.total,
         category: categoryForAmount(info.total),
         deals: info.deals.map(({ fy, month, amount, type }) => ({ fy, month, amount, type })),
@@ -630,7 +658,7 @@ export function buildEngagementComparison(donors, standarddonors, fy1, fy2, cate
     if (!key) continue;
     const fy = pick(d, "Fiscal_year", "Unspecified");
     const type = pick(d, "Type");
-    if (!byDonor[key]) byDonor[key] = { account: pick(d, "Account_Name"), byFY: {} };
+    if (!byDonor[key]) byDonor[key] = { account: pick(d, "Account_Name"), accountId: accountIdOf(d), byFY: {} };
     if (!byDonor[key].byFY[fy]) byDonor[key].byFY[fy] = {};
     if (!byDonor[key].byFY[fy][type]) {
       byDonor[key].byFY[fy][type] = { amount: 0, deals: [] };
@@ -712,6 +740,7 @@ function sortDealsDesc(deals) {
       const pipeline = pipelineForDonor[type];
       rows.push({
         account: info.account,
+        accountId: info.accountId,
         fy1Amount,
         fy1Type: fy1Amount != null ? type : null,
         fy1Month: a1 ? a1.month : null,

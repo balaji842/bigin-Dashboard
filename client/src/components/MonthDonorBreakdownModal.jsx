@@ -95,6 +95,20 @@ function MonthPill({ month, split }) {
 // used for each table's Export button. `hideSummary` drops the
 // "Donor Unique Count · Total Amount" text from the header (the Engaged
 // Donors table doesn't show it).
+// Frozen columns in every table of this popup: S.No and the Donor name stay
+// in place while the other columns scroll sideways underneath them.
+const NUM_W = 56;
+const DONOR_W = 220;
+const NUM_STYLE = { position: "sticky", left: 0, width: NUM_W, minWidth: NUM_W, maxWidth: NUM_W };
+const DONOR_STYLE = {
+  position: "sticky",
+  left: NUM_W,
+  width: DONOR_W,
+  minWidth: DONOR_W,
+  maxWidth: DONOR_W,
+  boxShadow: "inset -1px 0 0 #e2e8f0",
+};
+
 function BucketSection({ title, donorCount, totalAmount, action, hideSummary = false, children }) {
   return (
     <div className="rounded-xl border border-slate-100 overflow-hidden">
@@ -194,9 +208,9 @@ function FilterTh({ label, field, table }) {
   );
 }
 
-function SortTh({ label, field, table, align }) {
+function SortTh({ label, field, table, align, style, className = "" }) {
   return (
-    <th className={`px-4 py-2 font-semibold ${align === "right" ? "text-right" : ""}`}>
+    <th style={style} className={`px-4 py-2 font-semibold ${align === "right" ? "text-right" : ""} ${className}`}>
       <ColumnSortMenu
         variant="light"
         label={label}
@@ -457,8 +471,8 @@ export default function MonthDonorBreakdownModal({
                     <table className={`w-full text-sm ${showMonthCol ? "min-w-[1000px]" : "min-w-[900px]"}`}>
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                          <th className="px-4 py-2 font-semibold">S.No</th>
-                          <SortTh label="Donor" field="account" table={engaged} />
+                          <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
+                          <SortTh label="Donor" field="account" table={engaged} style={DONOR_STYLE} className="bg-white z-20" />
                           <SortTh label={`FY ${fy1} Amount`} field="fy1Amount" table={engaged} align="right" />
                           <FilterTh label={`FY ${fy1} Type`} field="fy1Type" table={engaged} />
                           <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={engaged} align="right" />
@@ -473,8 +487,8 @@ export default function MonthDonorBreakdownModal({
                       <tbody>
                         {engaged.filtered.map((r, i) => (
                           <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                            <td className="px-4 py-2 text-slate-400">{i + 1}</td>
-                            <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
+                            <td style={NUM_STYLE} className={`px-4 py-2 text-slate-400 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{i + 1}</td>
+                            <td style={DONOR_STYLE} className={`px-4 py-2 font-medium text-navy-900 break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{r.account}</td>
                             <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy1Amount)}</td>
                             <td className="px-4 py-2 whitespace-nowrap">{r.fy1Type}</td>
                             <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy2Amount)}</td>
@@ -508,8 +522,8 @@ export default function MonthDonorBreakdownModal({
                     <table className="w-full text-sm min-w-[640px]">
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                          <th className="px-4 py-2 font-semibold">S.No</th>
-                          <SortTh label="Donor" field="account" table={notEngaged} />
+                          <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
+                          <SortTh label="Donor" field="account" table={notEngaged} style={DONOR_STYLE} className="bg-white z-20" />
                           <SortTh label={`FY ${fy1} Amount`} field="fy1Amount" table={notEngaged} align="right" />
                           <FilterTh label={`FY ${fy1} Type`} field="fy1Type" table={notEngaged} />
                           <FilterTh label="KAM" field="kam" table={notEngaged} />
@@ -520,8 +534,8 @@ export default function MonthDonorBreakdownModal({
                       <tbody>
                         {notEngaged.filtered.map((r, i) => (
                           <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                            <td className="px-4 py-2 text-slate-400">{i + 1}</td>
-                            <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
+                            <td style={NUM_STYLE} className={`px-4 py-2 text-slate-400 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{i + 1}</td>
+                            <td style={DONOR_STYLE} className={`px-4 py-2 font-medium text-navy-900 break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{r.account}</td>
                             <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy1Amount)}</td>
                             <td className="px-4 py-2 whitespace-nowrap">{r.fy1Type}</td>
                             <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
@@ -548,8 +562,8 @@ export default function MonthDonorBreakdownModal({
                       <table className="w-full text-sm min-w-[880px]">
                         <thead>
                           <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                            <th className="px-4 py-2 font-semibold">S.No</th>
-                            <SortTh label="Donor" field="account" table={returning} />
+                            <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
+                            <SortTh label="Donor" field="account" table={returning} style={DONOR_STYLE} className="bg-white z-20" />
                             <SortTh label={`FY ${fy1} Amount`} field="fy1Amount" table={returning} align="right" />
                             <FilterTh label={`FY ${fy1} Type`} field="fy1Type" table={returning} />
                             <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={returning} align="right" />
@@ -563,8 +577,8 @@ export default function MonthDonorBreakdownModal({
                         <tbody>
                           {returning.filtered.map((r, i) => (
                             <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                              <td className="px-4 py-2 text-slate-400">{i + 1}</td>
-                              <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
+                              <td style={NUM_STYLE} className={`px-4 py-2 text-slate-400 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{i + 1}</td>
+                              <td style={DONOR_STYLE} className={`px-4 py-2 font-medium text-navy-900 break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{r.account}</td>
                               <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy1Amount)}</td>
                               <td className="px-4 py-2 whitespace-nowrap">
                                 {r.fy1Type}{r.fy1Month ? ` (${r.fy1Month})` : ""}
@@ -593,8 +607,8 @@ export default function MonthDonorBreakdownModal({
                       <table className="w-full text-sm min-w-[640px]">
                         <thead>
                           <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                            <th className="px-4 py-2 font-semibold">S.No</th>
-                            <SortTh label="Donor" field="account" table={newDonors} />
+                            <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
+                            <SortTh label="Donor" field="account" table={newDonors} style={DONOR_STYLE} className="bg-white z-20" />
                             <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={newDonors} align="right" />
                             <FilterTh label={`FY ${fy2} Type`} field="fy2Type" table={newDonors} />
                             <FilterTh label="Platform" field="platform" table={newDonors} />
@@ -606,8 +620,8 @@ export default function MonthDonorBreakdownModal({
                         <tbody>
                           {newDonors.filtered.map((r, i) => (
                             <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                              <td className="px-4 py-2 text-slate-400">{i + 1}</td>
-                              <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
+                              <td style={NUM_STYLE} className={`px-4 py-2 text-slate-400 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{i + 1}</td>
+                              <td style={DONOR_STYLE} className={`px-4 py-2 font-medium text-navy-900 break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{r.account}</td>
                               <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy2Amount)}</td>
                               <td className="px-4 py-2 whitespace-nowrap">{r.fy2Type}</td>
                               <td className="px-4 py-2 whitespace-nowrap">{r.platform}</td>
@@ -632,8 +646,8 @@ export default function MonthDonorBreakdownModal({
                       <table className="w-full text-sm min-w-[820px]">
                         <thead>
                           <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                            <th className="px-4 py-2 font-semibold">S.No</th>
-                            <SortTh label="Donor" field="account" table={past} />
+                            <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
+                            <SortTh label="Donor" field="account" table={past} style={DONOR_STYLE} className="bg-white z-20" />
                             <th className="px-4 py-2 font-semibold">Prior FY Giving</th>
                             <SortTh label={`FY ${fy2} Amount`} field="fy2Amount" table={past} align="right" />
                             <FilterTh label={`FY ${fy2} Type`} field="fy2Type" table={past} />
@@ -646,8 +660,8 @@ export default function MonthDonorBreakdownModal({
                         <tbody>
                           {past.filtered.map((r, i) => (
                             <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                              <td className="px-4 py-2 text-slate-400">{i + 1}</td>
-                              <td className="px-4 py-2 font-medium text-navy-900 whitespace-nowrap">{r.account}</td>
+                              <td style={NUM_STYLE} className={`px-4 py-2 text-slate-400 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{i + 1}</td>
+                              <td style={DONOR_STYLE} className={`px-4 py-2 font-medium text-navy-900 break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{r.account}</td>
                               <td className="px-4 py-2 text-xs text-slate-500 whitespace-nowrap">{r.priorSummary}</td>
                               <td className="px-4 py-2 text-right whitespace-nowrap">{moneyCr(r.fy2Amount)}</td>
                               <td className="px-4 py-2 whitespace-nowrap">{r.fy2Type}</td>

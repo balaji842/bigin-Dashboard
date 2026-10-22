@@ -155,6 +155,11 @@ function RemarksCell({ notes }) {
   );
 }
 
+// Frozen columns: the number column and the Donor Name stay in place while
+// every other column scrolls sideways underneath them.
+const SNO_W = 64;
+const DONOR_W = 240;
+
 const PAGE_SIZE = 10;
 
 const EMPTY_FILTERS = { donorType: null, kam: null, spoc: null, platform: null };
@@ -299,8 +304,23 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
         <table className="w-full text-sm min-w-[1060px]">
           <thead>
             <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
-              <th className="px-5 py-3 font-semibold">S.No</th>
-              <th className="px-5 py-3 font-semibold">
+              <th
+                style={{ position: "sticky", left: 0, width: SNO_W, minWidth: SNO_W, maxWidth: SNO_W }}
+                className="px-5 py-3 font-semibold bg-navy-900 z-20"
+              >
+                S.No
+              </th>
+              <th
+                style={{
+                  position: "sticky",
+                  left: SNO_W,
+                  width: DONOR_W,
+                  minWidth: DONOR_W,
+                  maxWidth: DONOR_W,
+                  boxShadow: "inset -1px 0 0 rgba(255,255,255,0.15)",
+                }}
+                className="px-5 py-3 font-semibold bg-navy-900 z-20"
+              >
                 <ColumnSortMenu label="Donor Name" sortDir={sortColumn === "account" ? sortDir : null} onSort={setSortFor("account")} />
               </th>
               <th className="px-5 py-3 font-semibold text-right">
@@ -357,8 +377,23 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
           <tbody>
             {pageRows.map((d, i) => (
               <tr key={d.account} className={i % 2 === 1 ? "bg-slate-50" : ""}>
-                <td className="px-5 py-3 text-slate-400">{safePage * PAGE_SIZE + i + 1}</td>
-                <td className="px-5 py-3">
+                <td
+                  style={{ position: "sticky", left: 0, width: SNO_W, minWidth: SNO_W, maxWidth: SNO_W }}
+                  className={`px-5 py-3 text-slate-400 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}
+                >
+                  {safePage * PAGE_SIZE + i + 1}
+                </td>
+                <td
+                  style={{
+                    position: "sticky",
+                    left: SNO_W,
+                    width: DONOR_W,
+                    minWidth: DONOR_W,
+                    maxWidth: DONOR_W,
+                    boxShadow: "inset -1px 0 0 #e2e8f0",
+                  }}
+                  className={`px-5 py-3 break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}
+                >
                   <button
                     type="button"
                     onClick={() => onSelectDonor(d)}

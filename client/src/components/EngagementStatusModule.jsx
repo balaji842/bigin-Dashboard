@@ -6,6 +6,9 @@ import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
 import KamComparisonTables from "./KamComparisonTables.jsx";
 import KamTargetChart from "./KamTargetChart.jsx";
+import DonorCallsModal from "./DonorCallsModal.jsx";
+import { RemarksCell, CallsCell, ExtrasNote, remarksForExport } from "./DonorExtras.jsx";
+import { useDonorExtras } from "../lib/useDonorExtras.js";
 
 // Multi-select Type pills, styled and positioned the same way as the
 // Overview/Conversion/Pipeline pages' Type filter — shared here by both
@@ -105,7 +108,9 @@ function PipelineOnlyToggle({ active, onClick }) {
   );
 }
 
-function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll }) {
+// `onSelectAll` ticks everything again (no filter); `onClearAll` unticks
+// everything so you can then tick just the few you want.
+function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll, onClearAll }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -118,6 +123,7 @@ function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll }) {
   }, []);
 
   const allSelected = selected == null;
+  const noneSelected = selected != null && selected.length === 0;
 
   return (
     <span className="relative inline-flex items-center gap-1" ref={ref}>
@@ -133,16 +139,23 @@ function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll }) {
 
       {open && (
         <div
-          className="absolute z-30 top-full mt-1 left-1/2 -translate-x-1/2 w-52 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden text-left normal-case"
+          className="absolute z-30 top-full mt-1 left-1/2 -translate-x-1/2 w-60 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden text-left normal-case"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50 border-b border-slate-100">
+          <div className="flex items-center justify-between gap-3 px-2.5 py-1.5 bg-slate-50 border-b border-slate-100">
             <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Filter</p>
-            {!allSelected && (
-              <button type="button" onClick={onSelectAll} className="text-[11px] font-semibold text-indigo-600 hover:underline">
-                Select all
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {!allSelected && (
+                <button type="button" onClick={onSelectAll} className="text-[11px] font-semibold text-indigo-600 hover:underline">
+                  Select all
+                </button>
+              )}
+              {onClearAll && !noneSelected && (
+                <button type="button" onClick={onClearAll} className="text-[11px] font-semibold text-indigo-600 hover:underline">
+                  Clear all
+                </button>
+              )}
+            </div>
           </div>
           <div className="max-h-48 overflow-y-auto py-1">
             {options.map((opt) => {
@@ -449,6 +462,12 @@ export default function EngagementStatusModule() {
 
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+
+  // Remarks (Bigin Notes) and Calls (Bigin Activities -> Calls) per donor,
+  // shown as the last two columns of the table (matched by the donor's
+  // Bigin company id), and the donor whose Calls popup is open.
+  const { remarksById, remarksNote, callsById, callsNote } = useDonorExtras();
+  const [callsDonor, setCallsDonor] = useState(null); // { account, calls } | null
 
   useEffect(() => {
     setLoading(true);
@@ -839,7 +858,7 @@ export default function EngagementStatusModule() {
   const filterSummary = [
     selectedTypes != null ? `Type: ${selectedTypes.join(", ")}` : null,
     search.trim() ? `Search: "${search.trim()}"` : null,
-    ...FILTERABLE_KEYS.filter((k) => filters[k] != null).map((k) => `${k}: ${filters[k].join(", ")}`),
+    ...FILTERABLE_KEYS.filter((k) => filters[k] != null).map((k) => `${k}: ${filters[k].join(", ") || "none"}`),
     pipelineOnly ? "Pipeline Month only" : null,
     sortColumn ? `Sorted by ${sortColumn}` : null,
   ]
@@ -853,6 +872,7 @@ export default function EngagementStatusModule() {
     selected: filters[key],
     onToggle: toggleFilter(key),
     onSelectAll: clearFilter(key),
+    onClearAll: () => setFilters((prev) => ({ ...prev, [key]: [] })),
   });
   const sortMenuProps = (key, label) => ({
     label,
@@ -995,12 +1015,15 @@ export default function EngagementStatusModule() {
                   "Engagement Status",
                   "KAM",
                   "Donor Type",
+                  "Remarks",
+                  "Calls",
                 ],
                 filteredRows.map((r, idx) => {
                   // Difference / Percentage / Amount Difference / Pipeline
-                  // are per donor — written on the donor's first row only
-                  // (as on screen), so summing a column in Excel doesn't
-                  // count a donor's totals once per Type row.
+                  // / Remarks / Calls are per donor — written on the
+                  // donor's first row only (as on screen), so summing a
+                  // column in Excel doesn't count a donor's totals once
+                  // per Type row.
                   const first = idx === 0 || filteredRows[idx - 1].account !== r.account;
                   const t = donorTotals.get(r.account) || {};
                   return [
@@ -1024,6 +1047,8 @@ export default function EngagementStatusModule() {
                   r.engaged ? "Engaged" : "Not Engaged",
                   r.kam || "",
                   r.donorType || "",
+                  !first ? "" : remarksForExport(remarksById[r.accountId]),
+                  !first ? "" : (callsById[r.accountId] || []).length,
                   ];
                 })
               )
@@ -1031,8 +1056,10 @@ export default function EngagementStatusModule() {
           />
         </div>
 
+        <ExtrasNote remarksNote={remarksNote} callsNote={callsNote} className="px-5 py-2 border-b border-slate-100" />
+
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[1500px]">
+          <table className="w-full text-sm min-w-[1850px]">
             <thead>
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th
@@ -1083,6 +1110,8 @@ export default function EngagementStatusModule() {
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
                   <ColumnFilterMenu {...filterMenuProps("donorType", "Donor Type")} />
                 </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">Remarks</th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">Calls</th>
               </tr>
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th className="px-3 py-2 font-medium align-middle border-l border-slate-100">
@@ -1242,12 +1271,25 @@ export default function EngagementStatusModule() {
                         <DonorTypeBadge value={r.donorType || "Unspecified"} />
                       </td>
                     )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 border-l border-slate-100 align-middle">
+                        <RemarksCell notes={remarksById[r.accountId]} />
+                      </td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">
+                        <CallsCell
+                          calls={callsById[r.accountId]}
+                          onOpen={() => setCallsDonor({ account: r.account, calls: callsById[r.accountId] || [] })}
+                        />
+                      </td>
+                    )}
                   </tr>
                 );
               })}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={19} className="px-3 py-10 text-center text-slate-400 text-xs">
+                  <td colSpan={21} className="px-3 py-10 text-center text-slate-400 text-xs">
                     No donors match the current filters.
                   </td>
                 </tr>
@@ -1308,6 +1350,8 @@ export default function EngagementStatusModule() {
           </div>
         </div>
       </div>
+
+      <DonorCallsModal open={!!callsDonor} onClose={() => setCallsDonor(null)} donor={callsDonor} />
     </div>
   );
 }

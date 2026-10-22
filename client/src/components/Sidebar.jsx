@@ -4,8 +4,8 @@ const NAV_ITEMS = [
   { id: "crm-overview", label: "Overview", ready: true, icon: IconTarget },
   { id: "closed-donors", label: "Conversion", ready: true, icon: IconWallet },
   { id: "standard-pipeline", label: "Pipeline", ready: true, icon: IconTrendingUp },
-  { id: "fy-comparison", label: "FY Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
-    { id: "engagement-status", label: "Engagement Status", ready: true, icon: IconCheckCircle },
+  { id: "fy-comparison", label: "Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
+    { id: "engagement-status", label: "Engagement Status 2025-26 & 2026-27", ready: true, icon: IconCheckCircle },
   { id: "overall-comparison", label: "Overall Comparison", ready: true, icon: IconChartBars },
 
 ];

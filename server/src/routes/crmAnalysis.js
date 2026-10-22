@@ -25,6 +25,7 @@ import {
   buildOverallComparison,
   buildDonorRemarks,
   buildDonorCalls,
+  accountIdOf,
 } from "../lib/dealHelpers.js";
 import { getNotes, invalidateNotesCache } from "../lib/notesCache.js";
 import { getCalls, invalidateCallsCache } from "../lib/callsCache.js";
@@ -355,6 +356,7 @@ router.get("/crm-analysis/closed-donors", async (req, res) => {
       table: closedThisFY.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
+        accountId: accountIdOf(d),
         amount: Number(d.Amount) || 0,
         stage: pick(d, "Stage"),
         type: pick(d, "Type"),
@@ -435,6 +437,7 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
       table: standardThisFY.map((d) => ({
         dealName: pick(d, "Deal_Name"),
         account: pick(d, "Account_Name"),
+        accountId: accountIdOf(d),
         amount: Number(d.Amount) || 0,
         stage: pick(d, "Stage"),
         type: pick(d, "Type"),
