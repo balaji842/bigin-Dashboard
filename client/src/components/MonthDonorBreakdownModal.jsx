@@ -4,6 +4,9 @@ import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
+import DonorCallsModal from "./DonorCallsModal.jsx";
+import { RemarksCell, CallsCell, remarksForExport } from "./DonorExtras.jsx";
+import { useDonorExtras } from "../lib/useDonorExtras.js";
 
 function DiffBadge({ pct, amount }) {
   if (pct == null) return <span className="text-slate-300">—</span>;
@@ -235,7 +238,7 @@ const slug = (s) =>
 //   "difference" -> every table (opened from the Difference cell), and the
 //                   Engaged Donors table also shows the FY 2026-2027 Month
 //                   column with its hover split
-export default function MonthDonorBreakdownModal({
+function MonthDonorBreakdownModalView({
   open,
   onClose,
   monthName,
@@ -245,7 +248,10 @@ export default function MonthDonorBreakdownModal({
   error,
   data,
   view = "difference",
+  onSelectCalls,
 }) {
+  // Each donor's Bigin Remarks and Calls (loaded when the popup opens).
+  const { remarksById, callsById } = useDonorExtras(open);
   // A donor with no category (nothing given in FY 2025-2026) is shown as
   // "—", which also makes "—" a pickable option in each Category filter.
   const withCategory = (rows) => (rows || []).map((r) => (r.category ? r : { ...r, category: "—" }));
@@ -339,6 +345,8 @@ export default function MonthDonorBreakdownModal({
         "KAM",
         "SPOC",
         "Category",
+        "Remarks",
+        "Calls",
       ],
       engaged.filtered.map((r, i) => [
         i + 1,
@@ -353,14 +361,16 @@ export default function MonthDonorBreakdownModal({
         r.kam || "",
         r.spoc || "",
         catText(r.category),
+        remarksForExport(remarksById[r.accountId]),
+        (callsById[r.accountId] || []).length,
       ])
     );
 
   const exportNotEngaged = () =>
     downloadCsv(
       file("not-engaged-donors"),
-      ["S.No", "Donor", `FY ${fy1} Amount`, `FY ${fy1} Type`, "KAM", "SPOC", "Category"],
-      notEngaged.filtered.map((r, i) => [i + 1, r.account, r.fy1Amount ?? "", r.fy1Type || "", r.kam || "", r.spoc || "", catText(r.category)])
+      ["S.No", "Donor", `FY ${fy1} Amount`, `FY ${fy1} Type`, "KAM", "SPOC", "Category", "Remarks", "Calls"],
+      notEngaged.filtered.map((r, i) => [i + 1, r.account, r.fy1Amount ?? "", r.fy1Type || "", r.kam || "", r.spoc || "", catText(r.category), remarksForExport(remarksById[r.accountId]), (callsById[r.accountId] || []).length])
     );
 
   const exportReturning = () =>
@@ -378,6 +388,8 @@ export default function MonthDonorBreakdownModal({
         "KAM",
         "SPOC",
         "Category",
+        "Remarks",
+        "Calls",
       ],
       returning.filtered.map((r, i) => [
         i + 1,
@@ -391,13 +403,15 @@ export default function MonthDonorBreakdownModal({
         r.kam || "",
         r.spoc || "",
         catText(r.category),
+        remarksForExport(remarksById[r.accountId]),
+        (callsById[r.accountId] || []).length,
       ])
     );
 
   const exportNew = () =>
     downloadCsv(
       file("new-donors"),
-      ["S.No", "Donor", `FY ${fy2} Amount`, `FY ${fy2} Type`, "Platform", "KAM", "SPOC", "Category"],
+      ["S.No", "Donor", `FY ${fy2} Amount`, `FY ${fy2} Type`, "Platform", "KAM", "SPOC", "Category", "Remarks", "Calls"],
       newDonors.filtered.map((r, i) => [
         i + 1,
         r.account,
@@ -407,13 +421,15 @@ export default function MonthDonorBreakdownModal({
         r.kam || "",
         r.spoc || "",
         catText(r.category),
+        remarksForExport(remarksById[r.accountId]),
+        (callsById[r.accountId] || []).length,
       ])
     );
 
   const exportPast = () =>
     downloadCsv(
       file("past-donors"),
-      ["S.No", "Donor", "Prior FY Giving", `FY ${fy2} Amount`, `FY ${fy2} Type`, "Platform", "KAM", "SPOC", "Category"],
+      ["S.No", "Donor", "Prior FY Giving", `FY ${fy2} Amount`, `FY ${fy2} Type`, "Platform", "KAM", "SPOC", "Category", "Remarks", "Calls"],
       past.filtered.map((r, i) => [
         i + 1,
         r.account,
@@ -424,6 +440,8 @@ export default function MonthDonorBreakdownModal({
         r.kam || "",
         r.spoc || "",
         catText(r.category),
+        remarksForExport(remarksById[r.accountId]),
+        (callsById[r.accountId] || []).length,
       ])
     );
 
@@ -468,7 +486,7 @@ export default function MonthDonorBreakdownModal({
                   action={exportBtn(exportEngaged, engaged.filtered)}
                 >
                   <div className="overflow-x-auto bg-white">
-                    <table className={`w-full text-sm ${showMonthCol ? "min-w-[1000px]" : "min-w-[900px]"}`}>
+                    <table className={`w-full text-sm ${showMonthCol ? "min-w-[1300px]" : "min-w-[1200px]"}`}>
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                           <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
@@ -482,6 +500,8 @@ export default function MonthDonorBreakdownModal({
                           <FilterTh label="KAM" field="kam" table={engaged} />
                           <FilterTh label="SPOC" field="spoc" table={engaged} />
                           <FilterTh label="Category" field="category" table={engaged} />
+                          <th className="px-4 py-2 font-semibold">Remarks</th>
+                          <th className="px-4 py-2 font-semibold text-center">Calls</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -502,9 +522,18 @@ export default function MonthDonorBreakdownModal({
                             <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
                             <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
                             <td className="px-4 py-2 whitespace-nowrap"><CategoryBadge value={r.category} /></td>
+                            <td className="px-4 py-2 align-middle">
+                              <RemarksCell notes={remarksById[r.accountId]} />
+                            </td>
+                            <td className="px-4 py-2 text-center whitespace-nowrap align-middle">
+                              <CallsCell
+                                calls={callsById[r.accountId]}
+                                onOpen={() => onSelectCalls?.({ account: r.account, calls: callsById[r.accountId] || [] })}
+                              />
+                            </td>
                           </tr>
                         ))}
-                        {engaged.filtered.length === 0 && <EmptyRow span={showMonthCol ? 11 : 10} />}
+                        {engaged.filtered.length === 0 && <EmptyRow span={showMonthCol ? 13 : 12} />}
                       </tbody>
                     </table>
                   </div>
@@ -519,7 +548,7 @@ export default function MonthDonorBreakdownModal({
                   action={exportBtn(exportNotEngaged, notEngaged.filtered)}
                 >
                   <div className="overflow-x-auto bg-white">
-                    <table className="w-full text-sm min-w-[640px]">
+                    <table className="w-full text-sm min-w-[940px]">
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                           <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
@@ -529,6 +558,8 @@ export default function MonthDonorBreakdownModal({
                           <FilterTh label="KAM" field="kam" table={notEngaged} />
                           <FilterTh label="SPOC" field="spoc" table={notEngaged} />
                           <FilterTh label="Category" field="category" table={notEngaged} />
+                          <th className="px-4 py-2 font-semibold">Remarks</th>
+                          <th className="px-4 py-2 font-semibold text-center">Calls</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -541,9 +572,18 @@ export default function MonthDonorBreakdownModal({
                             <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
                             <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
                             <td className="px-4 py-2 whitespace-nowrap"><CategoryBadge value={r.category} /></td>
+                            <td className="px-4 py-2 align-middle">
+                              <RemarksCell notes={remarksById[r.accountId]} />
+                            </td>
+                            <td className="px-4 py-2 text-center whitespace-nowrap align-middle">
+                              <CallsCell
+                                calls={callsById[r.accountId]}
+                                onOpen={() => onSelectCalls?.({ account: r.account, calls: callsById[r.accountId] || [] })}
+                              />
+                            </td>
                           </tr>
                         ))}
-                        {notEngaged.filtered.length === 0 && <EmptyRow span={7} />}
+                        {notEngaged.filtered.length === 0 && <EmptyRow span={9} />}
                       </tbody>
                     </table>
                   </div>
@@ -559,7 +599,7 @@ export default function MonthDonorBreakdownModal({
                     action={exportBtn(exportReturning, returning.filtered)}
                   >
                     <div className="overflow-x-auto bg-white">
-                      <table className="w-full text-sm min-w-[880px]">
+                      <table className="w-full text-sm min-w-[1180px]">
                         <thead>
                           <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                             <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
@@ -572,6 +612,8 @@ export default function MonthDonorBreakdownModal({
                             <FilterTh label="KAM" field="kam" table={returning} />
                             <FilterTh label="SPOC" field="spoc" table={returning} />
                             <FilterTh label="Category" field="category" table={returning} />
+                            <th className="px-4 py-2 font-semibold">Remarks</th>
+                            <th className="px-4 py-2 font-semibold text-center">Calls</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -589,9 +631,18 @@ export default function MonthDonorBreakdownModal({
                               <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
                               <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
                               <td className="px-4 py-2 whitespace-nowrap"><CategoryBadge value={r.category} /></td>
+                              <td className="px-4 py-2 align-middle">
+                                <RemarksCell notes={remarksById[r.accountId]} />
+                              </td>
+                              <td className="px-4 py-2 text-center whitespace-nowrap align-middle">
+                                <CallsCell
+                                  calls={callsById[r.accountId]}
+                                  onOpen={() => onSelectCalls?.({ account: r.account, calls: callsById[r.accountId] || [] })}
+                                />
+                              </td>
                             </tr>
                           ))}
-                          {returning.filtered.length === 0 && <EmptyRow span={10} />}
+                          {returning.filtered.length === 0 && <EmptyRow span={12} />}
                         </tbody>
                       </table>
                     </div>
@@ -604,7 +655,7 @@ export default function MonthDonorBreakdownModal({
                     action={exportBtn(exportNew, newDonors.filtered)}
                   >
                     <div className="overflow-x-auto bg-white">
-                      <table className="w-full text-sm min-w-[640px]">
+                      <table className="w-full text-sm min-w-[940px]">
                         <thead>
                           <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                             <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
@@ -615,6 +666,8 @@ export default function MonthDonorBreakdownModal({
                             <FilterTh label="KAM" field="kam" table={newDonors} />
                             <FilterTh label="SPOC" field="spoc" table={newDonors} />
                             <FilterTh label="Category" field="category" table={newDonors} />
+                            <th className="px-4 py-2 font-semibold">Remarks</th>
+                            <th className="px-4 py-2 font-semibold text-center">Calls</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -628,9 +681,18 @@ export default function MonthDonorBreakdownModal({
                               <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
                               <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
                               <td className="px-4 py-2 whitespace-nowrap"><CategoryBadge value={r.category} /></td>
+                              <td className="px-4 py-2 align-middle">
+                                <RemarksCell notes={remarksById[r.accountId]} />
+                              </td>
+                              <td className="px-4 py-2 text-center whitespace-nowrap align-middle">
+                                <CallsCell
+                                  calls={callsById[r.accountId]}
+                                  onOpen={() => onSelectCalls?.({ account: r.account, calls: callsById[r.accountId] || [] })}
+                                />
+                              </td>
                             </tr>
                           ))}
-                          {newDonors.filtered.length === 0 && <EmptyRow span={8} />}
+                          {newDonors.filtered.length === 0 && <EmptyRow span={10} />}
                         </tbody>
                       </table>
                     </div>
@@ -643,7 +705,7 @@ export default function MonthDonorBreakdownModal({
                     action={exportBtn(exportPast, past.filtered)}
                   >
                     <div className="overflow-x-auto bg-white">
-                      <table className="w-full text-sm min-w-[820px]">
+                      <table className="w-full text-sm min-w-[1120px]">
                         <thead>
                           <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                             <th style={NUM_STYLE} className="px-4 py-2 font-semibold bg-white z-20">S.No</th>
@@ -655,6 +717,8 @@ export default function MonthDonorBreakdownModal({
                             <FilterTh label="KAM" field="kam" table={past} />
                             <FilterTh label="SPOC" field="spoc" table={past} />
                             <FilterTh label="Category" field="category" table={past} />
+                            <th className="px-4 py-2 font-semibold">Remarks</th>
+                            <th className="px-4 py-2 font-semibold text-center">Calls</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -669,9 +733,18 @@ export default function MonthDonorBreakdownModal({
                               <td className="px-4 py-2 whitespace-nowrap">{r.kam}</td>
                               <td className="px-4 py-2 whitespace-nowrap">{r.spoc}</td>
                               <td className="px-4 py-2 whitespace-nowrap"><CategoryBadge value={r.category} /></td>
+                              <td className="px-4 py-2 align-middle">
+                                <RemarksCell notes={remarksById[r.accountId]} />
+                              </td>
+                              <td className="px-4 py-2 text-center whitespace-nowrap align-middle">
+                                <CallsCell
+                                  calls={callsById[r.accountId]}
+                                  onOpen={() => onSelectCalls?.({ account: r.account, calls: callsById[r.accountId] || [] })}
+                                />
+                              </td>
                             </tr>
                           ))}
-                          {past.filtered.length === 0 && <EmptyRow span={9} />}
+                          {past.filtered.length === 0 && <EmptyRow span={11} />}
                         </tbody>
                       </table>
                     </div>
@@ -683,5 +756,18 @@ export default function MonthDonorBreakdownModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// The popup plus the Calls popup that opens from a donor's call count. The
+// Calls popup sits NEXT TO the donor tables (not inside them) so closing it
+// doesn't also close the tables underneath.
+export default function MonthDonorBreakdownModal(props) {
+  const [callsDonor, setCallsDonor] = useState(null); // { account, calls } | null
+  return (
+    <>
+      <MonthDonorBreakdownModalView {...props} onSelectCalls={setCallsDonor} />
+      <DonorCallsModal open={!!callsDonor} onClose={() => setCallsDonor(null)} donor={callsDonor} />
+    </>
   );
 }

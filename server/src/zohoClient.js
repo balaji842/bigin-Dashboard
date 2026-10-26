@@ -258,4 +258,75 @@ async function fetchAllCalls() {
   throw lastErr;
 }
 
-export { biginRequest, fetchAllRecords, fetchAllNotes, fetchAllCalls, getAccessToken, DEFAULT_FIELDS };
+// Donors' phone numbers, for the "Mobile Number" column of the Engagement
+// Status table. A donor's number can sit on the company record (Companies,
+// API name "Accounts") or on one of its contacts (Contacts), so both modules
+// are read; each contact points back to its company in Account_Name.
+//
+// Which fields hold phone numbers differs from setup to setup (Phone, Mobile,
+// a custom "Mobile Number"…), so the Fields metadata API is asked for every
+// field of data type "phone" in each module (that lookup needs
+// ZohoBigin.settings.fields.READ and is optional). If it's refused, or Bigin
+// rejects a field name (400), it retries with the usual names (Phone /
+// Mobile) and finally with no "fields" list at all.
+//
+// Needs read access to the Companies and Contacts modules
+// (ZohoBigin.modules.accounts.READ / ZohoBigin.modules.contacts.READ, or
+// ZohoBigin.modules.ALL).
+const PHONE_GUESS = { Accounts: ["Phone", "Mobile"], Contacts: ["Mobile", "Phone"] };
+
+async function getPhoneFieldNames(module) {
+  const data = await biginRequest("/settings/fields", { params: { module } });
+  return (data?.fields || [])
+    .filter((f) => String(f.data_type || "").toLowerCase() === "phone")
+    .map((f) => f.api_name)
+    .filter(Boolean);
+}
+
+async function fetchModulePhones(module) {
+  let phoneFields = [];
+  try {
+    phoneFields = await getPhoneFieldNames(module);
+  } catch (err) {
+    console.warn(`[zohoClient] Couldn't look up the ${module} phone fields (${err.message}); using the usual names.`);
+  }
+  const base = module === "Contacts" ? ["Full_Name", "Account_Name"] : ["Account_Name"];
+  const attempts = [
+    phoneFields.length ? [...base, ...phoneFields].join(",") : null,
+    [...base, ...PHONE_GUESS[module]].join(","),
+    [...base, PHONE_GUESS[module][0]].join(","),
+    false,
+  ].filter((f, i, a) => f !== null && a.indexOf(f) === i);
+
+  let lastErr;
+  for (const fields of attempts) {
+    try {
+      const records = await fetchAllRecords(module, { fields });
+      return { records, phoneFields };
+    } catch (err) {
+      if (err.status !== 400) throw err;
+      lastErr = err;
+      console.warn(`[zohoClient] Bigin rejected the ${module} field list; trying a simpler request.`);
+    }
+  }
+  throw lastErr;
+}
+
+async function fetchAllDonorPhones() {
+  const result = { accounts: [], contacts: [], phoneFields: { Accounts: [], Contacts: [] } };
+  const errors = [];
+  for (const module of ["Accounts", "Contacts"]) {
+    try {
+      const { records, phoneFields } = await fetchModulePhones(module);
+      result[module === "Accounts" ? "accounts" : "contacts"] = records;
+      result.phoneFields[module] = phoneFields;
+    } catch (err) {
+      errors.push(err);
+      console.warn(`[zohoClient] Couldn't read ${module} for phone numbers: ${err.message}`);
+    }
+  }
+  if (errors.length === 2) throw errors[0]; // both failed — nothing to show
+  return result;
+}
+
+export { biginRequest, fetchAllRecords, fetchAllNotes, fetchAllCalls, fetchAllDonorPhones, getAccessToken, DEFAULT_FIELDS };

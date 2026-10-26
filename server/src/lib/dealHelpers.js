@@ -312,6 +312,64 @@ export function buildDonorCalls(calls, fieldKeys, accountIds, dealToAccount) {
   return out;
 }
 
+// ---------------------------------------------------------------------
+// Donor phone numbers: the numbers on each donor's Bigin company record and
+// on its contacts, grouped by company id.
+//
+// `data` is { accounts, contacts, phoneFields } from fetchAllDonorPhones().
+// Numbers from "Mobile" fields come first, then the rest (the company's own
+// before its contacts'). The same number written two ways ("98765 43210" / "+91 98765
+// 43210") is listed once. Returns { [accountId]: ["98765 43210", ...] } for
+// the companies in `accountIds` that have at least one number.
+// ---------------------------------------------------------------------
+export function buildDonorPhones(data, accountIds) {
+  const wanted = accountIds instanceof Set ? accountIds : new Set(accountIds);
+  const phoneFields = data?.phoneFields || {};
+  // [{ n: "98765 43210", mobile: true }] — `mobile` = it came from a field
+  // whose name says "mobile" (those are listed before landline-style ones).
+  const numbersOf = (rec, module) => {
+    const known = phoneFields[module] || [];
+    const keys = known.length ? known : Object.keys(rec).filter((k) => /phone|mobile/i.test(k));
+    return keys
+      .map((k) => ({ n: String(rec[k] ?? "").trim(), mobile: /mobile/i.test(k) }))
+      .filter((x) => x.n);
+  };
+  // two spellings of one number share a key: digits only, last 10
+  const keyOf = (num) => {
+    const digits = num.replace(/\D/g, "");
+    return digits.length > 10 ? digits.slice(-10) : digits;
+  };
+
+  const found = {}; // id -> [{ n, mobile }]
+  const seen = {};
+  const add = (id, nums) => {
+    for (const x of nums) {
+      const k = keyOf(x.n);
+      if (!k) continue;
+      (seen[id] ||= new Set());
+      if (seen[id].has(k)) continue;
+      seen[id].add(k);
+      (found[id] ||= []).push(x);
+    }
+  };
+
+  for (const rec of data?.accounts || []) {
+    const id = rec?.id != null ? String(rec.id) : null;
+    if (id && wanted.has(id)) add(id, numbersOf(rec, "Accounts"));
+  }
+  for (const rec of data?.contacts || []) {
+    const id = rec?.Account_Name?.id != null ? String(rec.Account_Name.id) : null;
+    if (id && wanted.has(id)) add(id, numbersOf(rec, "Contacts"));
+  }
+
+  const out = {};
+  for (const [id, list] of Object.entries(found)) {
+    // mobile-field numbers first, otherwise the order they were found in
+    out[id] = [...list].sort((a, b) => Number(b.mobile) - Number(a.mobile)).map((x) => x.n);
+  }
+  return out;
+}
+
 // Standard pipeline donors aren't closed yet, so there's no Closing_Date
 // to bucket by. Expected_Conversion_Month is a picklist (plain string
 // like "April"), not a date — group directly on that value instead of
@@ -475,7 +533,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month, categoryMap = 
     const donorKey = uniqueDonorKey(d);
     if (!donorKey) continue;
     const fy = pick(d, "Fiscal_year", "Unspecified");
-    if (!byDonor[donorKey]) byDonor[donorKey] = { account: pick(d, "Account_Name"), byFY: {} };
+    if (!byDonor[donorKey]) byDonor[donorKey] = { account: pick(d, "Account_Name"), accountId: accountIdOf(d), byFY: {} };
     if (!byDonor[donorKey].byFY[fy]) byDonor[donorKey].byFY[fy] = [];
     byDonor[donorKey].byFY[fy].push({
       amount: pickNumber(d, "Amount"),
@@ -564,6 +622,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month, categoryMap = 
       const diffPct = a1.amount > 0 ? (diffAmount / a1.amount) * 100 : a2.amount > 0 ? 100 : null;
       matching.push({
         account: info.account,
+        accountId: info.accountId,
         category,
         fy1Amount: a1.amount,
         fy1Type: a1.type,
@@ -581,6 +640,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month, categoryMap = 
       const a1 = aggregate(fy1Month);
       missing.push({
         account: info.account,
+        accountId: info.accountId,
         category,
         fy1Amount: a1.amount,
         fy1Type: a1.type,
@@ -595,6 +655,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month, categoryMap = 
         const a1 = aggregate(fy1All);
         returning.push({
           account: info.account,
+          accountId: info.accountId,
           category,
           fy1Amount: a1.amount,
           fy1Type: a1.type,
@@ -609,6 +670,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month, categoryMap = 
         // Lapsed donor returning after a gap of one or more years.
         past.push({
           account: info.account,
+          accountId: info.accountId,
           category,
           priorSummary: priorYearsLabel(info.byFY),
           fy2Amount: a2.amount,
@@ -622,6 +684,7 @@ export function buildMonthDonorBreakdown(donors, fy1, fy2, month, categoryMap = 
         // earlier fiscal year either.
         trulyNew.push({
           account: info.account,
+          accountId: info.accountId,
           category,
           fy2Amount: a2.amount,
           fy2Type: a2.type,

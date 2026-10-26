@@ -4,6 +4,9 @@ import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from 
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import ExportButton from "./ExportButton.jsx";
 import { downloadCsv } from "../lib/csvExport.js";
+import DonorCallsModal from "./DonorCallsModal.jsx";
+import { RemarksCell, CallsCell, remarksForExport } from "./DonorExtras.jsx";
+import { useDonorExtras } from "../lib/useDonorExtras.js";
 
 const DEFAULT_FILTERS = { platform: null, kam: null, spoc: null, type: null, donorType: null, category: null };
 
@@ -39,7 +42,12 @@ function CategoryBadge({ value }) {
 // everywhere else on the dashboard — donor rows here already carry
 // those fields the same way every /crm-analysis/* table does. Donor and
 // Amount get the same sort control used on every Donor History table.
-export default function DonorDrilldownModal({ open, onClose, monthName, fy, title, donors }) {
+//
+// Each row also shows the donor's Bigin Remarks (Notes) and Calls (loaded
+// when the popup opens, matched by the row's `accountId`); clicking a call
+// count opens the Calls popup (`onSelectCalls`).
+function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, onSelectCalls }) {
+  const { remarksById, callsById } = useDonorExtras(open);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [sortColumn, setSortColumn] = useState(null); // "account" | "amount" | null
   const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
@@ -119,7 +127,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
   const handleExport = () => {
     downloadCsv(
       `${heading.replace(/[^\w\- ]+/g, "").trim() || "donor-list"}.csv`,
-      ["#", "Donor", "Amount", "Platform", "KAM", "SPOC", "Donation Type", "Donor Type", ...(hasCategory ? ["Category"] : [])],
+      ["#", "Donor", "Amount", "Platform", "KAM", "SPOC", "Donation Type", "Donor Type", ...(hasCategory ? ["Category"] : []), "Remarks", "Calls"],
       filtered.map((d, i) => [
         i + 1,
         d.account,
@@ -130,6 +138,8 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
         d.type,
         d.donorType,
         ...(hasCategory ? [d.category === "—" ? "" : d.category] : []),
+        remarksForExport(remarksById[d.accountId]),
+        (callsById[d.accountId] || []).length,
       ])
     );
   };
@@ -158,7 +168,7 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
         </div>
         <div className="overflow-y-auto flex-1">
           <div className="overflow-x-auto">
-            <table className={`w-full text-sm ${hasCategory ? "min-w-[960px]" : "min-w-[880px]"}`}>
+            <table className={`w-full text-sm ${hasCategory ? "min-w-[1300px]" : "min-w-[1220px]"}`}>
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100 sticky top-0 bg-white">
                 <th
@@ -261,6 +271,8 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
                     />
                   </th>
                 )}
+                <th className="px-4 py-2 font-semibold">Remarks</th>
+                <th className="px-4 py-2 font-semibold text-center">Calls</th>
               </tr>
             </thead>
             <tbody>
@@ -296,11 +308,20 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
                       <CategoryBadge value={d.category} />
                     </td>
                   )}
+                  <td className="px-4 py-2 align-middle">
+                    <RemarksCell notes={remarksById[d.accountId]} />
+                  </td>
+                  <td className="px-4 py-2 text-center whitespace-nowrap align-middle">
+                    <CallsCell
+                      calls={callsById[d.accountId]}
+                      onOpen={() => onSelectCalls?.({ account: d.account, calls: callsById[d.accountId] || [] })}
+                    />
+                  </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={hasCategory ? 9 : 8} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={hasCategory ? 11 : 10} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No donors found for this selection.
                   </td>
                 </tr>
@@ -311,5 +332,18 @@ export default function DonorDrilldownModal({ open, onClose, monthName, fy, titl
         </div>
       </div>
     </div>
+  );
+}
+
+// The popup plus the Calls popup that opens from a donor's call count. The
+// Calls popup sits NEXT TO the donor list (not inside it) so closing it
+// doesn't also close the list underneath.
+export default function DonorDrilldownModal(props) {
+  const [callsDonor, setCallsDonor] = useState(null); // { account, calls } | null
+  return (
+    <>
+      <DonorDrilldownModalView {...props} onSelectCalls={setCallsDonor} />
+      <DonorCallsModal open={!!callsDonor} onClose={() => setCallsDonor(null)} donor={callsDonor} />
+    </>
   );
 }

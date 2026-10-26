@@ -7,8 +7,8 @@ import { IconClipboard, IconCheckCircle, IconXCircle } from "./icons.jsx";
 import KamComparisonTables from "./KamComparisonTables.jsx";
 import KamTargetChart from "./KamTargetChart.jsx";
 import DonorCallsModal from "./DonorCallsModal.jsx";
-import { RemarksCell, CallsCell, ExtrasNote, remarksForExport } from "./DonorExtras.jsx";
-import { useDonorExtras } from "../lib/useDonorExtras.js";
+import { RemarksCell, CallsCell, PhonesCell, ExtrasNote, remarksForExport, phonesForExport } from "./DonorExtras.jsx";
+import { useDonorExtras, useDonorPhones } from "../lib/useDonorExtras.js";
 
 // Multi-select Type pills, styled and positioned the same way as the
 // Overview/Conversion/Pipeline pages' Type filter — shared here by both
@@ -110,6 +110,26 @@ function PipelineOnlyToggle({ active, onClick }) {
 
 // `onSelectAll` ticks everything again (no filter); `onClearAll` unticks
 // everything so you can then tick just the few you want.
+// Same single-click header toggle for the Mobile Number column: on shows
+// only donors that have a mobile number in Bigin (donors with a blank one
+// are hidden), off (click again) brings every donor back.
+function HasValueToggle({ label, active, onClick, onTitle, offTitle }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span>{label}</span>
+      <button
+        type="button"
+        onClick={onClick}
+        className={`p-0.5 rounded ${active ? "text-indigo-600" : "text-slate-400 hover:text-slate-600"}`}
+        aria-label={offTitle}
+        title={active ? onTitle : offTitle}
+      >
+        <FunnelIcon className="w-3.5 h-3.5" />
+      </button>
+    </span>
+  );
+}
+
 function ColumnFilterMenu({ label, options, selected, onToggle, onSelectAll, onClearAll }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -455,6 +475,10 @@ export default function EngagementStatusModule() {
   // an actual pipeline entry; false (the default) shows everyone.
   const [pipelineOnly, setPipelineOnly] = useState(false);
 
+  // Mobile Number header's on/off toggle — true shows only donors that have
+  // a mobile number in Bigin; false (the default) shows everyone.
+  const [phoneOnly, setPhoneOnly] = useState(false);
+
   // Only one column sorts at a time, and only the two Amount columns
   // are sortable.
   const [sortColumn, setSortColumn] = useState(null);
@@ -467,6 +491,8 @@ export default function EngagementStatusModule() {
   // shown as the last two columns of the table (matched by the donor's
   // Bigin company id), and the donor whose Calls popup is open.
   const { remarksById, remarksNote, callsById, callsNote } = useDonorExtras();
+  // Donors' phone numbers from Bigin, for the Mobile Number column.
+  const { phonesById, phonesNote } = useDonorPhones();
   const [callsDonor, setCallsDonor] = useState(null); // { account, calls } | null
 
   useEffect(() => {
@@ -711,6 +737,7 @@ export default function EngagementStatusModule() {
     let rows = baseRows.filter((r) => {
       if (q && !r.account.toLowerCase().includes(q)) return false;
       if (pipelineOnly && !donorTotals.get(r.account)?.hasPipeline) return false;
+      if (phoneOnly && !(phonesById[r.accountId]?.length > 0)) return false;
       for (const key of FILTERABLE_KEYS) {
         if (key === "fy1Type" || key === "fy2Type" || key === "fy1Month" || key === "fy2Month") continue; // handled above
         const selected = filters[key];
@@ -740,7 +767,7 @@ export default function EngagementStatusModule() {
     }
 
     return rows;
-  }, [data, donorTotals, search, filters, pipelineOnly, sortColumn, sortDir]);
+  }, [data, donorTotals, phonesById, search, filters, pipelineOnly, phoneOnly, sortColumn, sortDir]);
 
   // Unique-donor counts AND amount totals for the summary cards — now
   // computed from the FILTERED rows (search + every column filter), so
@@ -780,7 +807,7 @@ export default function EngagementStatusModule() {
   }, [filteredRows]);
 
   // Reset to page 1 whenever the filtered/sorted set or page size changes.
-  useEffect(() => setPage(1), [search, filters, pipelineOnly, sortColumn, sortDir, rowsPerPage]);
+  useEffect(() => setPage(1), [search, filters, pipelineOnly, phoneOnly, sortColumn, sortDir, rowsPerPage]);
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / rowsPerPage));
   const pageRows = filteredRows.slice((page - 1) * rowsPerPage, page * rowsPerPage);
@@ -843,6 +870,7 @@ export default function EngagementStatusModule() {
     search.trim() !== "" ||
     Object.values(filters).some((v) => v != null) ||
     pipelineOnly ||
+    phoneOnly ||
     sortColumn != null ||
     selectedTypes != null;
 
@@ -850,6 +878,7 @@ export default function EngagementStatusModule() {
     setSearch("");
     setFilters(Object.fromEntries(FILTERABLE_KEYS.map((k) => [k, null])));
     setPipelineOnly(false);
+    setPhoneOnly(false);
     setSortColumn(null);
     setSortDir(null);
     setSelectedTypes(null);
@@ -860,6 +889,7 @@ export default function EngagementStatusModule() {
     search.trim() ? `Search: "${search.trim()}"` : null,
     ...FILTERABLE_KEYS.filter((k) => filters[k] != null).map((k) => `${k}: ${filters[k].join(", ") || "none"}`),
     pipelineOnly ? "Pipeline Month only" : null,
+    phoneOnly ? "Mobile number available only" : null,
     sortColumn ? `Sorted by ${sortColumn}` : null,
   ]
     .filter(Boolean)
@@ -1001,6 +1031,7 @@ export default function EngagementStatusModule() {
                   "Category",
                   "Platform",
                   "SPOC",
+                  "Mobile Number",
                   `FY ${fy1} Amount`,
                   `FY ${fy1} Type of Engagement`,
                   `FY ${fy1} Conversion Month`,
@@ -1031,6 +1062,7 @@ export default function EngagementStatusModule() {
                   r.category || "",
                   r.platform || "",
                   r.spoc || "",
+                  phonesForExport(phonesById[r.accountId]),
                   r.fy1Amount ?? "",
                   r.fy1Type || "",
                   // Every month with its amount ("March - 90000, April - 80000"),
@@ -1056,10 +1088,10 @@ export default function EngagementStatusModule() {
           />
         </div>
 
-        <ExtrasNote remarksNote={remarksNote} callsNote={callsNote} className="px-5 py-2 border-b border-slate-100" />
+        <ExtrasNote remarksNote={remarksNote} callsNote={callsNote} phonesNote={phonesNote} className="px-5 py-2 border-b border-slate-100" />
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[1850px]">
+          <table className="w-full text-sm min-w-[1990px]">
             <thead>
               <tr className="text-center text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th
@@ -1091,6 +1123,15 @@ export default function EngagementStatusModule() {
                 </th>
                 <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
                   <ColumnFilterMenu {...filterMenuProps("spoc", "SPOC")} />
+                </th>
+                <th rowSpan={2} className="px-3 py-2.5 font-semibold align-middle">
+                  <HasValueToggle
+                    label="Mobile Number"
+                    active={phoneOnly}
+                    onClick={() => setPhoneOnly((v) => !v)}
+                    onTitle="Showing only donors with a mobile number — click to show everyone"
+                    offTitle="Show only donors with a mobile number"
+                  />
                 </th>
                 <th colSpan={3} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy1}</th>
                 <th colSpan={3} className="px-3 py-2.5 font-semibold align-middle border-l border-slate-100">FY {fy2}</th>
@@ -1179,6 +1220,11 @@ export default function EngagementStatusModule() {
                     )}
                     {!isContinuation && (
                       <td rowSpan={span} className="px-3 py-2.5 text-center whitespace-nowrap align-middle">{r.spoc || "—"}</td>
+                    )}
+                    {!isContinuation && (
+                      <td rowSpan={span} className="px-3 py-2.5 text-center align-middle">
+                        <PhonesCell numbers={phonesById[r.accountId]} />
+                      </td>
                     )}
                     <td className="px-3 py-2.5 text-right text-slate-700 border-l border-slate-100 whitespace-nowrap align-middle">
                       <AmountBreakdown amount={r.fy1Amount} donorType={r.donorType} />
@@ -1289,7 +1335,7 @@ export default function EngagementStatusModule() {
               })}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={21} className="px-3 py-10 text-center text-slate-400 text-xs">
+                  <td colSpan={22} className="px-3 py-10 text-center text-slate-400 text-xs">
                     No donors match the current filters.
                   </td>
                 </tr>

@@ -9,13 +9,45 @@ import { useEffect, useState } from "react";
 // them (typically the Zoho token lacks that permission) the matching
 // `...Note` carries a short message for the table to show; the table itself
 // still works, with empty Remarks / 0 Calls.
-export function useDonorExtras() {
+// Phone numbers per donor (from the Bigin company record and its contacts),
+// keyed by the donor's Bigin company id: phonesById[companyId] = ["98765 43210", ...].
+// Used by the Engagement Status table's "Mobile Number" column. Like the
+// extras above, a failure only fills `phonesNote` — the table still works.
+export function useDonorPhones() {
+  const [phonesById, setPhonesById] = useState({});
+  const [phonesNote, setPhonesNote] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/crm-analysis/donor-phones")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((json) => {
+        if (cancelled) return;
+        setPhonesById(json.phones || {});
+        setPhonesNote(json.error || null);
+      })
+      .catch((e) => {
+        if (!cancelled) setPhonesNote(`Mobile numbers couldn't be loaded (${e.message}).`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { phonesById, phonesNote };
+}
+
+// `enabled` (default true) lets a popup load these only when it's opened
+// (it fetches again each time it opens, which is cheap — the server keeps
+// them cached).
+export function useDonorExtras(enabled = true) {
   const [remarksById, setRemarksById] = useState({});
   const [remarksNote, setRemarksNote] = useState(null);
   const [callsById, setCallsById] = useState({});
   const [callsNote, setCallsNote] = useState(null);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     let cancelled = false;
 
     fetch("/api/crm-analysis/donor-remarks")
@@ -43,7 +75,7 @@ export function useDonorExtras() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
 
   return { remarksById, remarksNote, callsById, callsNote };
 }

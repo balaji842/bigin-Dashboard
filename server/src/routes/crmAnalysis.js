@@ -25,10 +25,12 @@ import {
   buildOverallComparison,
   buildDonorRemarks,
   buildDonorCalls,
+  buildDonorPhones,
   accountIdOf,
 } from "../lib/dealHelpers.js";
 import { getNotes, invalidateNotesCache } from "../lib/notesCache.js";
 import { getCalls, invalidateCallsCache } from "../lib/callsCache.js";
+import { getPhones, invalidatePhonesCache } from "../lib/phonesCache.js";
 import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
 
@@ -123,11 +125,13 @@ router.post("/crm-analysis/refresh", async (_req, res) => {
     invalidatePipelinesCache();
     invalidateNotesCache();
     invalidateCallsCache();
+    invalidatePhonesCache();
     const donors = await getPipelines({ force: true });
     // Notes refresh in the background — they're optional, so the Refresh
     // button never waits on them and never fails because of them.
     getNotes({ force: true }).catch((err) => console.error("[notes] refresh failed:", err.message));
     getCalls({ force: true }).catch((err) => console.error("[calls] refresh failed:", err.message));
+    getPhones({ force: true }).catch((err) => console.error("[phones] refresh failed:", err.message));
     res.json({ ok: true, count: donors.length, ...pipelinesCacheInfo() });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -755,6 +759,7 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
       if (!byDonor[key]) {
         byDonor[key] = {
           account: pick(d, "Account_Name"),
+          accountId: accountIdOf(d),
           category: donorCategory(categoryMap, key),
           amount: 0,
           platforms: new Set(),
@@ -775,6 +780,7 @@ router.get("/crm-analysis/fy-comparison/month-donor-list", async (req, res) => {
     const rows = Object.values(byDonor)
       .map((r) => ({
         account: r.account,
+        accountId: r.accountId,
         category: r.category,
         amount: r.amount,
         platform: [...r.platforms].join(" / "),
@@ -883,6 +889,36 @@ router.get("/crm-analysis/donor-calls", async (_req, res) => {
       error: scopeProblem
         ? "Calls unavailable: the Zoho token doesn't have permission to read Calls (needs the ZohoBigin.modules.calls.READ scope, or ZohoBigin.modules.ALL)."
         : `Calls unavailable: ${err.message}`,
+      generatedAt: new Date().toISOString(),
+    });
+  }
+});
+
+// GET /api/crm-analysis/donor-phones
+//
+// The "Mobile Number" column of the Engagement Status table: the phone
+// numbers Bigin has for each donor — on the company record and on its
+// contacts — grouped by company id (see buildDonorPhones). Optional: if
+// Bigin can't give them (typically the Zoho token can't read Companies /
+// Contacts) this still answers 200 with an empty list and an `error`
+// message for the page to show, so the rest of the dashboard is unaffected.
+router.get("/crm-analysis/donor-phones", async (_req, res) => {
+  try {
+    const donors = await getPipelines();
+    const accountIds = new Set(
+      donors.map((d) => (d.Account_Name?.id != null ? String(d.Account_Name.id) : null)).filter(Boolean)
+    );
+    const data = await getPhones();
+    res.json({ phones: buildDonorPhones(data, accountIds), generatedAt: new Date().toISOString() });
+  } catch (err) {
+    const code = err?.body?.code || "";
+    const scopeProblem = err?.status === 401 || err?.status === 403 || /SCOPE|AUTHORIZ|PERMISSION/i.test(code);
+    console.error("[donor-phones]", err.message);
+    res.json({
+      phones: {},
+      error: scopeProblem
+        ? "Mobile numbers unavailable: the Zoho token doesn't have permission to read Companies / Contacts (needs ZohoBigin.modules.accounts.READ and ZohoBigin.modules.contacts.READ, or ZohoBigin.modules.ALL)."
+        : `Mobile numbers unavailable: ${err.message}`,
       generatedAt: new Date().toISOString(),
     });
   }

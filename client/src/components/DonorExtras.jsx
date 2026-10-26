@@ -117,14 +117,37 @@ export function CallsCell({ calls, onOpen }) {
   );
 }
 
-// A short amber message when Remarks / Calls couldn't be loaded from Bigin
-// (nothing is rendered when everything loaded fine).
-export function ExtrasNote({ remarksNote, callsNote, className = "" }) {
-  if (!remarksNote && !callsNote) return null;
+// Mobile Number cell: the donor's numbers from Bigin (the company record and
+// its contacts), the first two shown, one per line, with a "+N" when there
+// are more (hover for the full list).
+export function PhonesCell({ numbers }) {
+  if (!numbers || numbers.length === 0) return <span className="text-slate-300">—</span>;
+  const shown = numbers.slice(0, 2);
+  const more = numbers.length - shown.length;
+  return (
+    <span className="inline-flex flex-col items-center leading-snug" title={numbers.join(", ")}>
+      {shown.map((n) => (
+        <span key={n} className="whitespace-nowrap text-slate-700">
+          {n}
+        </span>
+      ))}
+      {more > 0 && <span className="text-[10px] font-semibold text-slate-400">+{more} more</span>}
+    </span>
+  );
+}
+
+// For Excel: every number, comma-separated.
+export const phonesForExport = (numbers) => (numbers || []).join(", ");
+
+// A short amber message when Remarks / Calls / Mobile Numbers couldn't be
+// loaded from Bigin (nothing is rendered when everything loaded fine).
+export function ExtrasNote({ remarksNote, callsNote, phonesNote, className = "" }) {
+  if (!remarksNote && !callsNote && !phonesNote) return null;
   return (
     <div className={className}>
       {remarksNote && <p className="text-xs text-amber-600">{remarksNote}</p>}
       {callsNote && <p className="text-xs text-amber-600 mt-1">{callsNote}</p>}
+      {phonesNote && <p className="text-xs text-amber-600 mt-1">{phonesNote}</p>}
     </div>
   );
 }
