@@ -27,6 +27,9 @@ import {
   buildDonorCalls,
   buildDonorPhones,
   accountIdOf,
+  parseDonationCategoryParam,
+  donationCategoryOf,
+  isExcludedDonationCategory,
 } from "../lib/dealHelpers.js";
 import { getNotes, invalidateNotesCache } from "../lib/notesCache.js";
 import { getCalls, invalidateCallsCache } from "../lib/callsCache.js";
@@ -140,9 +143,88 @@ router.post("/crm-analysis/refresh", async (_req, res) => {
 
 // Kept as its own lightweight call so the filter lists stay complete even
 // while the person has other filters narrowed down elsewhere in the UI.
-router.get("/crm-analysis/filter-options", async (_req, res) => {
+// GET /api/crm-analysis/data-scope
+//
+// Which deals the whole dashboard counts. Only NSNOP deals are kept: deals
+// whose Category of Donation is Rhapsody or IGCC are left out of every page.
+// This shows, for the data currently loaded, how many deals (and how much
+// money) there are per Category of Donation value — split into closed deals
+// and open pipeline deals — and which of them were left out. Add
+// ?list=pipeline to also list the deals behind the Overview Pipeline card, or
+// ?list=blank to list the companies whose open deals have no category.
+router.get("/crm-analysis/data-scope", async (req, res) => {
   try {
-    const donors = await getPipelines();
+    await getPipelines();
+    const all = await getPipelines({ category: "all" }); // every deal, before the filter
+
+    // How the deals split by Category of Donation, separately for closed
+    // deals and for open pipeline deals (a blank category is kept, so a
+    // Rhapsody / IGCC deal that was never given a category shows up here
+    // as "(blank)" and is NOT left out).
+    const byStage = { closedDeals: {}, openPipelineDeals: {} };
+    for (const d of all) {
+      const group = isStandardPipeline(d) ? byStage.openPipelineDeals : byStage.closedDeals;
+      const cat = donationCategoryOf(d) || "(blank)";
+      const row = (group[cat] ||= { deals: 0, amount: 0, excluded: isExcludedDonationCategory(d) });
+      row.deals += 1;
+      row.amount += pickNumber(d, "Amount");
+    }
+
+    const out = { ...pipelinesCacheInfo(), byStage };
+
+    // ?list=pipeline -> the deals behind the Overview "Pipeline 2026-2027"
+    // card (approved, open, FY 2026-27), biggest first, with the category
+    // each one carries — to spot which ones are really Rhapsody / IGCC.
+    if (req.query.list === "pipeline") {
+      out.pipelineCardDeals = all
+        .filter((d) => isStandardPipeline(d) && pick(d, "Fiscal_year", "") === "2026-2027" && isApprovedOpenPipeline(d))
+        .map((d) => ({
+          deal: pick(d, "Deal_Name"),
+          account: pick(d, "Account_Name"),
+          categoryOfDonation: donationCategoryOf(d) || "(blank)",
+          counted: !isExcludedDonationCategory(d),
+          expectedMonth: pick(d, "Expected_Conversion_Month", "(blank)"),
+          stage: pick(d, "Stage"),
+          amount: pickNumber(d, "Amount"),
+          type: pick(d, "Type"),
+          platform: pick(d, "Platform"),
+          kam: pick(d, "Pipeline_KAM"),
+          pipeline: pick(d, "Pipeline"),
+          subPipeline: pick(d, "Sub_Pipeline"),
+        }))
+        .sort((x, y) => y.amount - x.amount);
+    }
+    // ?list=blank -> every company that has OPEN deals with no Category of
+    // Donation and no (Rhapsody) / (IGCC) tag in its name (any fiscal year),
+    // biggest first. Like Bigin's own dashboards these are NOT counted as
+    // NSNOP, and they appear on no dashboard until the category is filled in
+    // on Bigin. Names are as in Bigin.
+    if (req.query.list === "blank") {
+      const byCompany = {};
+      for (const d of all) {
+        if (!isStandardPipeline(d) || donationCategoryOf(d)) continue;
+        const name = pick(d, "Account_Name");
+        const row = (byCompany[name] ||= { company: name, deals: 0, amount: 0, types: new Set(), stages: new Set(), fiscalYears: new Set() });
+        row.deals += 1;
+        row.amount += pickNumber(d, "Amount");
+        row.types.add(pick(d, "Type"));
+        row.stages.add(pick(d, "Stage"));
+        row.fiscalYears.add(pick(d, "Fiscal_year", ""));
+      }
+      out.openDealsWithBlankCategory = Object.values(byCompany)
+        .map((r) => ({ ...r, types: [...r.types], stages: [...r.stages], fiscalYears: [...r.fiscalYears] }))
+        .sort((a, b) => b.amount - a.amount);
+    }
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/crm-analysis/filter-options", async (req, res) => {
+  try {
+    // ?category=rhapsody|igcc -> that category's options (Other Dashboards page)
+    const donors = await getPipelines({ category: parseDonationCategoryParam(req.query.category) });
     const distinct = (field) =>
       [...new Set(donors.map((d) => pick(d, field)))].sort((a, b) => a.localeCompare(b));
 
@@ -177,7 +259,9 @@ router.get("/crm-analysis/overview", async (req, res) => {
   const selectedDonorTypes = parseListParam(req.query.donorTypes);
 
   try {
-    const donors = await getPipelines();
+    // ?category=rhapsody|igcc -> the same dashboard for that category's deals
+    // (Other Dashboards page); without it, the normal NSNOP data.
+    const donors = await getPipelines({ category: parseDonationCategoryParam(req.query.category) });
 
     let filtereddonors = donors;
     if (selectedTypes && selectedTypes.length > 0) {
@@ -839,7 +923,7 @@ router.get("/crm-analysis/engagement-status", async (req, res) => {
 // so the rest of the dashboard is unaffected.
 router.get("/crm-analysis/donor-remarks", async (_req, res) => {
   try {
-    const donors = await getPipelines();
+    const donors = await getPipelines({ category: "all" });
     const accountIds = new Set(
       donors.map((d) => (d.Account_Name?.id != null ? String(d.Account_Name.id) : null)).filter(Boolean)
     );
@@ -869,7 +953,7 @@ router.get("/crm-analysis/donor-remarks", async (_req, res) => {
 // message for the page to show, so the rest of the dashboard is unaffected.
 router.get("/crm-analysis/donor-calls", async (_req, res) => {
   try {
-    const donors = await getPipelines();
+    const donors = await getPipelines({ category: "all" });
     const accountIds = new Set();
     const dealToAccount = new Map(); // a call can be "Related To" a deal instead of the company
     for (const d of donors) {
@@ -904,7 +988,7 @@ router.get("/crm-analysis/donor-calls", async (_req, res) => {
 // message for the page to show, so the rest of the dashboard is unaffected.
 router.get("/crm-analysis/donor-phones", async (_req, res) => {
   try {
-    const donors = await getPipelines();
+    const donors = await getPipelines({ category: "all" });
     const accountIds = new Set(
       donors.map((d) => (d.Account_Name?.id != null ? String(d.Account_Name.id) : null)).filter(Boolean)
     );

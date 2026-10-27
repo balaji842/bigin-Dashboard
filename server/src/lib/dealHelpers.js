@@ -31,6 +31,129 @@ export function isClosed(deal) {
 // field: a real boolean true, or a string/picklist like "Yes"/"Approved"
 // (case-insensitive). Anything else (No, Pending, blank, false) counts
 // as not approved.
+// ---------------------------------------------------------------------
+// Which deals the dashboard counts: only the NSNOP programme's.
+//
+// This is the same rule the Bigin dashboards use (e.g. the "Total Pipeline"
+// component: ... AND Category of Donation Is NSNOP): a deal counts as NSNOP
+// only when its "Category of Donation" (API name Category_of_Donation) IS
+// "NSNOP" (capitals don't matter). Everything else is left out of EVERY NSNOP
+// page — applied once, when the deals are loaded (see pipelinesCache.js), so
+// no page can forget it:
+//   - category Rhapsody / IGCC      -> not NSNOP; shown on the Other Dashboards page
+//   - category BLANK                -> not NSNOP (Bigin doesn't count it either).
+//       If its company name carries the tag "(Rhapsody)" / "(IGCC)" it is
+//       treated as that category and shown on the Other Dashboards page;
+//       otherwise it appears nowhere until the category is filled in on Bigin.
+//       /api/crm-analysis/data-scope?list=blank lists these deals' companies.
+//   - a category that IS set always wins over the company-name tag.
+// ---------------------------------------------------------------------
+export const EXCLUDED_DONATION_CATEGORIES = ["rhapsody", "igcc"]; // the categories that have an Other Dashboards page
+
+// Optional manual list, for blank-category deals whose company has no
+// "(Rhapsody)" / "(IGCC)" tag in its name:
+//
+//   "Company name exactly as in Bigin (capitals don't matter)": "rhapsody" | "igcc",
+//
+// Only applies to blank categories. Normally not needed — fill in Category of
+// Donation on Bigin instead and delete the line.
+export const DONATION_CATEGORY_BY_COMPANY = {
+  // "Example Company Pvt Ltd": "rhapsody",
+};
+
+// "(Rhapsody)" / "(IGCC)" in the company name — also matches a tag with extra
+// words or spacing inside the brackets, e.g. "( Rhapsody )" or "(IGCC - Care)".
+const COMPANY_TAGS = [
+  { label: "Rhapsody", pattern: /\([^)]*\brhapsody\b[^)]*\)/i },
+  { label: "IGCC", pattern: /\([^)]*\bigcc\b[^)]*\)/i },
+];
+function companyTagCategory(deal) {
+  const acc = deal?.Account_Name;
+  const name = acc && typeof acc === "object" ? acc.name : acc;
+  if (!name) return "";
+  const text = String(name);
+  for (const t of COMPANY_TAGS) if (t.pattern.test(text)) return t.label;
+  return "";
+}
+
+const normCompany = (name) => String(name ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+const COMPANY_CATEGORY = new Map(
+  Object.entries(DONATION_CATEGORY_BY_COMPANY).map(([name, cat]) => [normCompany(name), String(cat).trim().toLowerCase()])
+);
+const CATEGORY_LABEL = { rhapsody: "Rhapsody", igcc: "IGCC" };
+
+// The Category of Donation exactly as set in Bigin, as plain text ("" when
+// blank). Handles a plain picklist value, a lookup-style { name } object, or
+// a multi-select list.
+function biginCategoryText(deal) {
+  const v = deal?.Category_of_Donation;
+  if (v == null) return "";
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "object" ? x?.name ?? x?.value ?? "" : String(x))).join(", ").trim();
+  if (typeof v === "object") return String(v.name ?? v.value ?? "").trim();
+  return String(v).trim();
+}
+
+// The deal's category: what Bigin says if it says anything; for a blank one,
+// "Rhapsody" / "IGCC" from the company-name tag (or the manual list above);
+// otherwise "".
+export function donationCategoryOf(deal) {
+  const text = biginCategoryText(deal);
+  if (text) return text;
+  const tagged = companyTagCategory(deal);
+  if (tagged) return tagged;
+  if (COMPANY_CATEGORY.size === 0) return "";
+  const acc = deal?.Account_Name;
+  const company = acc && typeof acc === "object" ? acc.name : acc;
+  const forced = COMPANY_CATEGORY.get(normCompany(company));
+  return forced ? CATEGORY_LABEL[forced] || forced : "";
+}
+
+// True when the deal is an NSNOP deal — its category IS "NSNOP".
+export function isNsnopDeal(deal) {
+  return donationCategoryOf(deal).trim().toLowerCase() === "nsnop";
+}
+
+// True when the deal is left out of the NSNOP pages (anything that isn't NSNOP).
+export function isExcludedDonationCategory(deal) {
+  return !isNsnopDeal(deal);
+}
+
+// The categories that get their own dashboards ("Other Dashboards" page).
+// `?category=rhapsody` / `igcc` on a route selects one of them; anything else
+// means the normal NSNOP data.
+export function parseDonationCategoryParam(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  return EXCLUDED_DONATION_CATEGORIES.includes(v) ? v : null;
+}
+
+// True when the deal's category contains `key` ("rhapsody" / "igcc").
+export function matchesDonationCategory(deal, key) {
+  return donationCategoryOf(deal).toLowerCase().includes(key);
+}
+
+// Keeps only the NSNOP deals and reports what happened (how many deals and how
+// much money per category, and which were left out) so it can be checked at
+// /api/crm-analysis/data-scope and in the server log.
+export function applyDonationScope(records) {
+  const byCategory = {};
+  const kept = [];
+  for (const d of records) {
+    const cat = donationCategoryOf(d) || "(blank)";
+    const excluded = !isNsnopDeal(d);
+    const entry = (byCategory[cat] ||= { deals: 0, excluded });
+    entry.deals += 1;
+    if (!excluded) kept.push(d);
+  }
+  const info = {
+    totalDeals: records.length,
+    keptDeals: kept.length,
+    excludedDeals: records.length - kept.length,
+    rule: "A deal counts as NSNOP only when its Category of Donation is NSNOP (same as the Bigin dashboards).",
+    byCategory,
+  };
+  return { kept, info };
+}
+
 export function isApprovedByRajesh(deal) {
   const raw = deal.Approved_by_Rajesh;
   if (raw === true) return true;

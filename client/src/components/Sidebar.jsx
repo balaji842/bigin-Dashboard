@@ -7,9 +7,19 @@ const NAV_ITEMS = [
   { id: "fy-comparison", label: "Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
     { id: "engagement-status", label: "Engagement Status 2025-26 & 2026-27", ready: true, icon: IconCheckCircle },
   { id: "overall-comparison", label: "Overall Comparison", ready: true, icon: IconChartBars },
+     { id: "other-dashboards", label: "Other Dashboards", ready: true, icon: IconGrid },
 
 ];
-
+   function IconGrid(props) {
+     return (
+       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={props.className}>
+         <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+         <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+         <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+         <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+       </svg>
+     );
+   }
 export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose, activePage, onNavigate }) {
   return (
     <>

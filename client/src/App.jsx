@@ -8,6 +8,7 @@ import StandardPipelineModule from "./components/StandardPipelineModule.jsx";
 import FYComparisonModule from "./components/FYComparisonModule.jsx";
 import EngagementStatusModule from "./components/EngagementStatusModule.jsx";
 import OverallComparisonModule from "./components/OverallComparisonModule.jsx";
+import OtherDashboardsModule from "./components/OtherDashboardsModule.jsx";
 import LoginGate, { isUnlocked } from "./components/LoginGate.jsx";
 import AIChatbot from "./components/AIChatbot.jsx";
 
@@ -36,6 +37,10 @@ const PAGE_TITLES = {
     title: "CRM Analysis · Overview",
     // sub: "Closed donors, standard pipeline, and donor breakdowns pulled fresh from Bigin.",
   },
+     "other-dashboards": {
+     title: "Other Dashboards",
+     sub: "Dashboards for the Rhapsody and IGCC donation categories, which are not part of the NSNOP numbers on the other pages.",
+   },
 };
 
 export default function App() {
@@ -107,6 +112,7 @@ export default function App() {
           {activePage === "engagement-status" && <EngagementStatusModule />}
           {activePage === "overall-comparison" && <OverallComparisonModule />}
           {activePage === "closed-donors" && <ClosedDealsModule />}
+          {activePage === "other-dashboards" && <OtherDashboardsModule />}
         </main>
 
         <footer className="border-t border-slate-200 px-4 sm:px-6 md:px-8 py-3 max-w-6xl mx-auto w-full flex flex-col sm:flex-row gap-1 sm:gap-0 items-start sm:items-center justify-between text-xs text-slate-400">

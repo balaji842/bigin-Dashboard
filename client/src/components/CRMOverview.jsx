@@ -237,7 +237,10 @@ function fyLabel(fys) {
   return fys === "ALL" || !fys || fys.length === 0 ? "All Years" : `FY ${fys.join(", ")}`;
 }
 
-export default function CRMOverview() {
+// `category` (optional): "rhapsody" | "igcc" shows this same dashboard for
+// that Category of Donation's deals (the "Other Dashboards" page); without it
+// it's the normal NSNOP dashboard.
+export default function CRMOverview({ category = null } = {}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -315,14 +318,14 @@ export default function CRMOverview() {
   };
 
   useEffect(() => {
-    fetch("/api/crm-analysis/filter-options")
+    fetch(`/api/crm-analysis/filter-options${category ? `?category=${category}` : ""}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((json) => {
         setTypeOptions(json.types || []);
         setPlatformOptions(json.platforms || []);
       })
       .catch(() => {});
-  }, []);
+  }, [category]);
 
   useEffect(() => {
     fetch("/api/crm-analysis/donor-remarks")
@@ -372,6 +375,7 @@ export default function CRMOverview() {
     if (selectedTypes != null) params.set("types", selectedTypes.join(","));
     if (selectedPlatforms != null) params.set("platforms", selectedPlatforms.join(","));
     if (selectedDonorTypes && selectedDonorTypes.length > 0) params.set("donorTypes", selectedDonorTypes.join(","));
+    if (category) params.set("category", category);
     fetch(`/api/crm-analysis/overview?${params.toString()}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -380,7 +384,7 @@ export default function CRMOverview() {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [selectedFYs, selectedTypes, selectedPlatforms, selectedDonorTypes]);
+  }, [selectedFYs, selectedTypes, selectedPlatforms, selectedDonorTypes, category]);
 
   const monthDonors = useMemo(() => {
     if (!data || !modalMonth) return [];
