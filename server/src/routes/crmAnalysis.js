@@ -34,6 +34,7 @@ import {
 import { getNotes, invalidateNotesCache } from "../lib/notesCache.js";
 import { getCalls, invalidateCallsCache } from "../lib/callsCache.js";
 import { getPhones, invalidatePhonesCache } from "../lib/phonesCache.js";
+import { getCategoryTargets, setCategoryTarget } from "../lib/categoryTargetsStore.js";
 import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
 
@@ -975,6 +976,63 @@ router.get("/crm-analysis/donor-calls", async (_req, res) => {
         : `Calls unavailable: ${err.message}`,
       generatedAt: new Date().toISOString(),
     });
+  }
+});
+
+// GET /api/crm-analysis/category-dashboard?category=rhapsody|igcc|cer
+//
+// The numbers behind the cards of an Other Dashboards page (Rhapsody / IGCC) and
+// of the CER Dashboard:
+// that category's closed deals and its approved open pipeline deals, one small
+// record per deal, so the page can total them for whichever period each card is
+// set to (this month / quarter / financial year / ...) without another request.
+// Also the category's saved yearly targets (see categoryTargetsStore.js).
+router.get("/crm-analysis/category-dashboard", async (req, res) => {
+  const category = parseDonationCategoryParam(req.query.category);
+  if (!category) return res.status(400).json({ error: "category must be rhapsody, igcc or cer" });
+  try {
+    const deals = await getPipelines({ category });
+    const base = (d) => ({
+      amount: Number(d.Amount) || 0,
+      fy: pick(d, "Fiscal_year", "Unspecified"),
+      type: pick(d, "Type"),
+      platform: pick(d, "Platform"),
+      kam: pick(d, "Pipeline_KAM"),
+      spoc: pick(d, "Spoc"),
+      account: pick(d, "Account_Name"),
+      accountId: accountIdOf(d),
+    });
+    res.json({
+      category,
+      closed: deals.filter(isClosed).map((d) => ({ ...base(d), closingDate: d.Closing_Date || null })),
+      // the same "approved by Rajesh, not Lost / On Hold" rule as the Pipeline card on Overview
+      pipeline: deals
+        .filter((d) => isStandardPipeline(d) && isApprovedOpenPipeline(d))
+        .map((d) => ({ ...base(d), expectedMonth: pick(d, "Expected_Conversion_Month", null) })),
+      targets: getCategoryTargets(category),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("[category-dashboard]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/crm-analysis/category-target  { category, fy, amount }
+// Saves the yearly target shown on a category dashboard's "Target Amount"
+// card (amount in rupees; 0 clears it).
+router.put("/crm-analysis/category-target", (req, res) => {
+  const { category, fy, amount } = req.body || {};
+  const cat = parseDonationCategoryParam(category);
+  const value = Number(amount);
+  if (!cat || !/^\d{4}-\d{4}$/.test(String(fy)) || !Number.isFinite(value) || value < 0) {
+    return res.status(400).json({ error: "Needs category (rhapsody|igcc), fy like 2026-2027, and amount >= 0" });
+  }
+  try {
+    res.json({ ok: true, targets: setCategoryTarget(cat, String(fy), value) });
+  } catch (err) {
+    console.error("[category-target]", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

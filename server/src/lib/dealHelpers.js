@@ -48,7 +48,11 @@ export function isClosed(deal) {
 //       /api/crm-analysis/data-scope?list=blank lists these deals' companies.
 //   - a category that IS set always wins over the company-name tag.
 // ---------------------------------------------------------------------
-export const EXCLUDED_DONATION_CATEGORIES = ["rhapsody", "igcc"]; // the categories that have an Other Dashboards page
+// The categories that have a dashboard of their own (Other Dashboards: Rhapsody,
+// IGCC; and the CER Dashboard). None of them is NSNOP, so none is counted on
+// the NSNOP pages. A deal is CER when its Category of Donation is "CER" or its
+// company name carries the tag "(CER)".
+export const EXCLUDED_DONATION_CATEGORIES = ["rhapsody", "igcc", "cer"];
 
 // Optional manual list, for blank-category deals whose company has no
 // "(Rhapsody)" / "(IGCC)" tag in its name:
@@ -66,6 +70,7 @@ export const DONATION_CATEGORY_BY_COMPANY = {
 const COMPANY_TAGS = [
   { label: "Rhapsody", pattern: /\([^)]*\brhapsody\b[^)]*\)/i },
   { label: "IGCC", pattern: /\([^)]*\bigcc\b[^)]*\)/i },
+  { label: "CER", pattern: /\([^)]*\bcer\b[^)]*\)/i },
 ];
 function companyTagCategory(deal) {
   const acc = deal?.Account_Name;
@@ -80,7 +85,7 @@ const normCompany = (name) => String(name ?? "").replace(/\s+/g, " ").trim().toL
 const COMPANY_CATEGORY = new Map(
   Object.entries(DONATION_CATEGORY_BY_COMPANY).map(([name, cat]) => [normCompany(name), String(cat).trim().toLowerCase()])
 );
-const CATEGORY_LABEL = { rhapsody: "Rhapsody", igcc: "IGCC" };
+const CATEGORY_LABEL = { rhapsody: "Rhapsody", igcc: "IGCC", cer: "CER" };
 
 // The Category of Donation exactly as set in Bigin, as plain text ("" when
 // blank). Handles a plain picklist value, a lookup-style { name } object, or
@@ -126,9 +131,10 @@ export function parseDonationCategoryParam(value) {
   return EXCLUDED_DONATION_CATEGORIES.includes(v) ? v : null;
 }
 
-// True when the deal's category contains `key` ("rhapsody" / "igcc").
+// True when the deal's category contains `key` ("rhapsody" / "igcc" / "cer") as a
+// whole word, so a short key like "cer" can never match inside another word.
 export function matchesDonationCategory(deal, key) {
-  return donationCategoryOf(deal).toLowerCase().includes(key);
+  return new RegExp(`\\b${key}\\b`, "i").test(donationCategoryOf(deal));
 }
 
 // Keeps only the NSNOP deals and reports what happened (how many deals and how

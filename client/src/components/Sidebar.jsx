@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { id: "fy-comparison", label: "Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
     { id: "engagement-status", label: "Engagement Status 2025-26 & 2026-27", ready: true, icon: IconCheckCircle },
   { id: "overall-comparison", label: "Overall Comparison", ready: true, icon: IconChartBars },
+  { id: "cer-dashboard", label: "CER Dashboard", ready: true, icon: IconDonation },
      { id: "other-dashboards", label: "Other Dashboards", ready: true, icon: IconGrid },
 
 ];
@@ -17,6 +18,15 @@ const NAV_ITEMS = [
          <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
          <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
          <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+       </svg>
+     );
+   }
+   // an icon for the CER Dashboard (a hand holding a heart)
+   function IconDonation(props) {
+     return (
+       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+         <path d="M12 12.5s-3.8-2.3-3.8-4.9A2.1 2.1 0 0112 6.5a2.1 2.1 0 013.8 1.1c0 2.6-3.8 4.9-3.8 4.9z" />
+         <path d="M3 17h3.2l2.6 1.8h5.4l5.3-2.6a1.3 1.3 0 00-1.2-2.3L15 15" />
        </svg>
      );
    }

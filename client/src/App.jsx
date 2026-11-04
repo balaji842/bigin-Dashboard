@@ -8,6 +8,7 @@ import StandardPipelineModule from "./components/StandardPipelineModule.jsx";
 import FYComparisonModule from "./components/FYComparisonModule.jsx";
 import EngagementStatusModule from "./components/EngagementStatusModule.jsx";
 import OverallComparisonModule from "./components/OverallComparisonModule.jsx";
+import CERDashboardModule from "./components/CERDashboardModule.jsx";
 import OtherDashboardsModule from "./components/OtherDashboardsModule.jsx";
 import LoginGate, { isUnlocked } from "./components/LoginGate.jsx";
 import AIChatbot from "./components/AIChatbot.jsx";
@@ -37,9 +38,13 @@ const PAGE_TITLES = {
     title: "CRM Analysis · Overview",
     // sub: "Closed donors, standard pipeline, and donor breakdowns pulled fresh from Bigin.",
   },
+  "cer-dashboard": {
+    title: "CER Dashboard",
+    // sub: "Track and manage Corporate and Individual donations for education and community development.",
+  },
      "other-dashboards": {
      title: "Other Dashboards",
-     sub: "Dashboards for the Rhapsody and IGCC donation categories, which are not part of the NSNOP numbers on the other pages.",
+    //  sub: "Dashboards for the Rhapsody and IGCC donation categories, which are not part of the NSNOP numbers on the other pages.",
    },
 };
 
@@ -112,6 +117,7 @@ export default function App() {
           {activePage === "engagement-status" && <EngagementStatusModule />}
           {activePage === "overall-comparison" && <OverallComparisonModule />}
           {activePage === "closed-donors" && <ClosedDealsModule />}
+          {activePage === "cer-dashboard" && <CERDashboardModule />}
           {activePage === "other-dashboards" && <OtherDashboardsModule />}
         </main>
 

@@ -240,7 +240,15 @@ function fyLabel(fys) {
 // `category` (optional): "rhapsody" | "igcc" shows this same dashboard for
 // that Category of Donation's deals (the "Other Dashboards" page); without it
 // it's the normal NSNOP dashboard.
-export default function CRMOverview({ category = null } = {}) {
+//
+// `hideFilters` removes the "No filters applied" bar and the Type / Platform
+// pills at the top. `afterFiscalYear` (a React node) replaces everything below
+// the "Closed donors by Fiscal Year" cards — the Month-wise table, the Donor
+// Type cards and the Donor History table — with that content (the Rhapsody
+// dashboard uses it for its cards). `showTotalConversion={false}` drops the
+// "Total Conversion FY 2022-2027" card and shows the FY 2026-2027 card first,
+// then the Pipeline 2026-2027 card.
+export default function CRMOverview({ category = null, hideFilters = false, afterFiscalYear = null, showTotalConversion = true } = {}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -431,8 +439,60 @@ export default function CRMOverview({ category = null } = {}) {
   };
   const otherYears = data.byFiscalYear.filter((y) => y.name !== "2026-2027");
 
+  // The three cards at the top, defined once so they can be shown in either order.
+  const totalConversionCard = (
+    <KpiCard
+      label="Total Conversion FY 2022-2027"
+      amount={data.closed.allTime.amount}
+      donors={data.closed.allTime.donors}
+      accent="emerald"
+      active={selectedFYs == null}
+      onClick={() => setSelectedFYs(null)}
+      onDonorsClick={() =>
+        openDrilldown(
+          "Total Conversion FY 2022-2027",
+          filterRows(data.table, (r) => r.subPipeline !== "Standard Pipeline")
+        )
+      }
+    />
+  );
+  const pipelineCard = (
+    <KpiCard
+      label="Pipeline 2026-2027"
+      amount={data.pipeline2027Approved.amount}
+      donors={data.pipeline2027Approved.donors}
+      accent="navy"
+      onDonorsClick={() =>
+        openDrilldown(
+          "Pipeline 2026-2027",
+          filterRows(
+            data.table,
+            (r) => r.subPipeline === "Standard Pipeline" && r.fiscalYear === "2026-2027" && isApprovedOpenPipelineRow(r)
+          )
+        )
+      }
+    />
+  );
+  const fy2027Card = (
+    <FYCard
+      year={fy2027.name}
+      amount={fy2027.amount}
+      donors={fy2027.donors}
+      active={selectedFYs != null && selectedFYs.includes(fy2027.name)}
+      onClick={() => toggleFY(fy2027.name)}
+      onDonorsClick={() =>
+        openDrilldown(
+          `FY ${fy2027.name}`,
+          filterRows(data.table, (r) => r.subPipeline !== "Standard Pipeline" && r.fiscalYear === fy2027.name)
+        )
+      }
+    />
+  );
+
   return (
     <div className="space-y-5 sm:space-y-6">
+      {!hideFilters && (
+      <>
       <ClearFiltersBar
         active={hasActiveFilters}
         onClear={clearAllFilters}
@@ -452,50 +512,22 @@ export default function CRMOverview({ category = null } = {}) {
         <TypeFilterPills label="Type" options={typeOptions} selected={selectedTypes} onToggle={toggleType} />
         <TypeFilterPills label="Platform" options={platformOptions} selected={selectedPlatforms} onToggle={togglePlatform} />
       </div>
+      </>
+      )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <KpiCard
-          label="Total Conversion FY 2022-2027"
-          amount={data.closed.allTime.amount}
-          donors={data.closed.allTime.donors}
-          accent="emerald"
-          active={selectedFYs == null}
-          onClick={() => setSelectedFYs(null)}
-          onDonorsClick={() =>
-            openDrilldown(
-              "Total Conversion FY 2022-2027",
-              filterRows(data.table, (r) => r.subPipeline !== "Standard Pipeline")
-            )
-          }
-        />
-        <KpiCard
-          label="Pipeline 2026-2027"
-          amount={data.pipeline2027Approved.amount}
-          donors={data.pipeline2027Approved.donors}
-          accent="navy"
-          onDonorsClick={() =>
-            openDrilldown(
-              "Pipeline 2026-2027",
-              filterRows(
-                data.table,
-                (r) => r.subPipeline === "Standard Pipeline" && r.fiscalYear === "2026-2027" && isApprovedOpenPipelineRow(r)
-              )
-            )
-          }
-        />
-        <FYCard
-          year={fy2027.name}
-          amount={fy2027.amount}
-          donors={fy2027.donors}
-          active={selectedFYs != null && selectedFYs.includes(fy2027.name)}
-          onClick={() => toggleFY(fy2027.name)}
-          onDonorsClick={() =>
-            openDrilldown(
-              `FY ${fy2027.name}`,
-              filterRows(data.table, (r) => r.subPipeline !== "Standard Pipeline" && r.fiscalYear === fy2027.name)
-            )
-          }
-        />
+      <div className={`grid grid-cols-1 gap-4 ${showTotalConversion ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+        {showTotalConversion ? (
+          <>
+            {totalConversionCard}
+            {pipelineCard}
+            {fy2027Card}
+          </>
+        ) : (
+          <>
+            {fy2027Card}
+            {pipelineCard}
+          </>
+        )}
       </div>
 
       <div>
@@ -521,6 +553,10 @@ export default function CRMOverview({ category = null } = {}) {
         </div>
       </div>
 
+      {afterFiscalYear != null ? (
+        afterFiscalYear
+      ) : (
+      <>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 items-start">
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
           <div className="bg-navy-900 text-white px-5 py-3">
@@ -619,6 +655,8 @@ export default function CRMOverview({ category = null } = {}) {
         remarksNote={remarksNote}
         callsNote={callsNote}
       />
+      </>
+      )}
 
       <DonorDrilldownModal
         open={!!modalMonth}
