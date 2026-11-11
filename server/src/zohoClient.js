@@ -329,4 +329,182 @@ async function fetchAllDonorPhones() {
   return result;
 }
 
-export { biginRequest, fetchAllRecords, fetchAllNotes, fetchAllCalls, fetchAllDonorPhones, getAccessToken, DEFAULT_FIELDS };
+// The deals (Pipelines module), with the "Donation Type" field added.
+//
+// CER donations are the deals whose Donation Type is "CER" (a different field
+// from Category of Donation and from Type = Cash / Kind). The field's API name
+// isn't hard-coded: it's found by its label in the Fields metadata (needs
+// ZohoBigin.settings.fields.READ, optional). If that lookup is refused, or Bigin
+// rejects the field name (400), it retries with the usual name "Donation_Type"
+// and finally with the original field list, so a wrong guess can never stop the
+// dashboard loading — it just leaves Donation Type out (no CER data then).
+//
+// Each deal gets its Donation Type under the key `Donation_Type`, whatever the
+// field is really called in Bigin.
+let donationTypeFieldPromise = null;
+const normFieldLabel = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+async function findDonationTypeField() {
+  const data = await biginRequest("/settings/fields", { params: { module: "Pipelines" } });
+  const hit = (data?.fields || []).find((f) => normFieldLabel(f.field_label || f.display_label) === "donationtype");
+  return hit?.api_name || null;
+}
+
+async function fetchAllPipelines() {
+  if (!donationTypeFieldPromise) {
+    donationTypeFieldPromise = findDonationTypeField().catch((err) => {
+      console.warn(`[zohoClient] Couldn't look up the Donation Type field (${err.message}); trying "Donation_Type".`);
+      return null;
+    });
+  }
+  const found = await donationTypeFieldPromise;
+  // the field found by its label, then the usual name, and only then no extra field at all
+  const attempts = [...new Set([found, "Donation_Type"].filter(Boolean)), null];
+
+  let lastErr;
+  for (const name of attempts) {
+    const fields = name ? `${DEFAULT_FIELDS.Pipelines},${name}` : DEFAULT_FIELDS.Pipelines;
+    try {
+      const records = await fetchAllRecords("Pipelines", { fields });
+      if (name && name !== "Donation_Type") for (const r of records) r.Donation_Type = r[name];
+      if (!name) console.warn("[zohoClient] Loaded deals WITHOUT the Donation Type field — the CER Dashboard will be empty.");
+      return records;
+    } catch (err) {
+      if (err.status !== 400) throw err;
+      lastErr = err;
+      console.warn(`[zohoClient] Bigin rejected the deal field list with "${name || "(no extra field)"}"; trying a simpler one.`);
+    }
+  }
+  throw lastErr;
+}
+
+// ── Stage history of ONE deal ─────────────────────────────────────────
+//
+// Bigin shows it on the "Stage History" tab of a pipeline record. Bigin's API
+// docs don't spell out the route, so this finds it instead of assuming:
+//   1. the record's Stage History related list — its API name is read from the
+//      related-lists metadata (GET /settings/related_lists?module=Pipelines);
+//      if that lookup is refused, "Stage_History" is tried;
+//   2. that list is asked for with no `fields`, then with a few field lists,
+//      because some Bigin lists answer REQUIRED_PARAM_MISSING without them;
+//   3. last resort: the record's timeline (…/__timeline), keeping the Stage changes.
+// The first combination that works is remembered, so later deals take one call.
+// If nothing works for the first few deals, it stops trying for ten minutes
+// instead of burning API credits, and says why (see /crm-analysis/stage-history-debug).
+//
+// Returns { source: "related" | "timeline", rows: [raw Bigin rows] }.
+let stageHistoryNameP = null;
+let stageHistoryPlan = null; // { kind: "related", api, fields } | { kind: "timeline" }
+let stageHistoryEverWorked = false;
+let stageHistoryFailures = 0;
+let stageHistoryBlockedUntil = 0;
+const STAGE_HISTORY_FIELD_SETS = [null, "Stage,Modified_Time", "Stage,Modified_Time,Moved_To,Amount,Closing_Date", "id,Stage"];
+
+async function findStageHistoryList() {
+  const data = await biginRequest("/settings/related_lists", { params: { module: "Pipelines" } });
+  const hit = (data?.related_lists || []).find((l) => /stage.?history/i.test(`${l.api_name} ${l.name} ${l.display_label}`));
+  return hit?.api_name || null;
+}
+
+const rowsOf = (data) => (Array.isArray(data?.data) ? data.data : data === "" || data == null ? [] : null);
+
+async function fetchStageHistory(dealId, log = null) {
+  const note = (s) => log && log.push(s);
+  if (Date.now() < stageHistoryBlockedUntil) {
+    const e = new Error("Stage history isn't available from the Bigin API (see /api/crm-analysis/stage-history-debug).");
+    e.status = 501;
+    throw e;
+  }
+
+  const tryRelated = async (api, fields) => {
+    const params = fields ? { fields } : undefined;
+    try {
+      const data = await biginRequest(`/Pipelines/${dealId}/${api}`, { params });
+      const rows = rowsOf(data);
+      note(`related ${api} fields=${fields || "(none)"} → ${rows ? `${rows.length} rows` : "unexpected shape"}`);
+      if (rows) return { source: "related", rows, plan: { kind: "related", api, fields } };
+    } catch (err) {
+      note(`related ${api} fields=${fields || "(none)"} → ${err.status || "?"} ${String(err.message).slice(0, 160)}`);
+      err.stageAttempt = true;
+      throw err;
+    }
+    return null;
+  };
+
+  const tryTimeline = async () => {
+    try {
+      const data = await biginRequest(`/Pipelines/${dealId}/__timeline`);
+      const rows = Array.isArray(data?.__timeline) ? data.__timeline : null;
+      note(`timeline → ${rows ? `${rows.length} events` : "unexpected shape"}`);
+      if (rows) return { source: "timeline", rows, plan: { kind: "timeline" } };
+    } catch (err) {
+      note(`timeline → ${err.status || "?"} ${String(err.message).slice(0, 160)}`);
+    }
+    return null;
+  };
+
+  let result = null;
+
+  // 1. what worked last time
+  if (stageHistoryPlan) {
+    try {
+      result = stageHistoryPlan.kind === "timeline" ? await tryTimeline() : await tryRelated(stageHistoryPlan.api, stageHistoryPlan.fields);
+    } catch (err) {
+      if (![400, 404].includes(err.status)) throw err; // auth, rate limit, outage: not a "wrong route" problem
+    }
+  }
+
+  // 2. work it out
+  if (!result) {
+    if (!stageHistoryNameP) {
+      stageHistoryNameP = findStageHistoryList().catch((err) => {
+        note(`related-lists lookup → ${err.status || "?"} ${String(err.message).slice(0, 120)}`);
+        return null;
+      });
+    }
+    const found = await stageHistoryNameP;
+    note(`related list found by label: ${found || "(none)"}`);
+    const apis = [...new Set([found, "Stage_History"].filter(Boolean))];
+    outer: for (const api of apis) {
+      for (const fields of STAGE_HISTORY_FIELD_SETS) {
+        try {
+          result = await tryRelated(api, fields);
+          if (result) break outer;
+        } catch (err) {
+          if (err.status === 404) break; // this name isn't a route at all — next name
+          if (err.status !== 400) throw err; // auth / rate limit / outage — stop here
+        }
+      }
+    }
+    if (!result) result = await tryTimeline();
+  }
+
+  if (!result) {
+    stageHistoryFailures += 1;
+    if (!stageHistoryEverWorked && stageHistoryFailures >= 3) stageHistoryBlockedUntil = Date.now() + 10 * 60 * 1000;
+    const e = new Error("Bigin did not return stage history for this record.");
+    e.status = 404;
+    throw e;
+  }
+
+  stageHistoryPlan = result.plan;
+  stageHistoryEverWorked = true;
+  stageHistoryFailures = 0;
+  return { source: result.source, rows: result.rows };
+}
+
+// For the diagnostics route: runs fetchStageHistory for one deal and reports every step.
+async function debugStageHistory(dealId) {
+  const log = [];
+  stageHistoryBlockedUntil = 0; // a manual check is always allowed to try
+  let out = null;
+  let error = null;
+  try {
+    out = await fetchStageHistory(dealId, log);
+  } catch (err) {
+    error = `${err.status || ""} ${err.message}`.trim();
+  }
+  return { dealId, attempts: log, plan: stageHistoryPlan, error, source: out?.source || null, sampleRows: out ? out.rows.slice(0, 3) : [], rowCount: out ? out.rows.length : 0 };
+}
+
+export { biginRequest, fetchAllRecords, fetchAllPipelines, fetchAllNotes, fetchAllCalls, fetchAllDonorPhones, fetchStageHistory, debugStageHistory, getAccessToken, DEFAULT_FIELDS };

@@ -19,6 +19,7 @@ import {
   buildTypePlatformBreakdown,
   STANDARD_TYPES,
   isApprovedOpenPipeline,
+  isOpenPipelineStage,
   buildDonorCategories,
   donorCategory,
   buildMonthEngagementCounts,
@@ -30,10 +31,13 @@ import {
   parseDonationCategoryParam,
   donationCategoryOf,
   isExcludedDonationCategory,
+  donationTypeOf,
 } from "../lib/dealHelpers.js";
 import { getNotes, invalidateNotesCache } from "../lib/notesCache.js";
 import { getCalls, invalidateCallsCache } from "../lib/callsCache.js";
 import { getPhones, invalidatePhonesCache } from "../lib/phonesCache.js";
+import { getStageHistories, invalidateStageHistoryCache } from "../lib/stageHistoryCache.js";
+import { debugStageHistory } from "../zohoClient.js";
 import { getCategoryTargets, setCategoryTarget } from "../lib/categoryTargetsStore.js";
 import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
@@ -130,6 +134,7 @@ router.post("/crm-analysis/refresh", async (_req, res) => {
     invalidateNotesCache();
     invalidateCallsCache();
     invalidatePhonesCache();
+    invalidateStageHistoryCache();
     const donors = await getPipelines({ force: true });
     // Notes refresh in the background — they're optional, so the Refresh
     // button never waits on them and never fails because of them.
@@ -171,7 +176,27 @@ router.get("/crm-analysis/data-scope", async (req, res) => {
       row.amount += pickNumber(d, "Amount");
     }
 
-    const out = { ...pipelinesCacheInfo(), byStage };
+    // The same split by Donation Type (the field the CER Dashboard uses), so it
+    // can be compared with Bigin's own filter "Donation Type Is CER" on the
+    // Closed Leads tab. fieldLoaded = false means the field didn't come through
+    // from Bigin at all.
+    const byDonationType = {};
+    for (const d of all) {
+      const key = donationTypeOf(d) || "(blank)";
+      const row = (byDonationType[key] ||= { closedDeals: 0, closedAmount: 0, openDeals: 0, openAmount: 0 });
+      if (isStandardPipeline(d)) {
+        row.openDeals += 1;
+        row.openAmount += pickNumber(d, "Amount");
+      } else {
+        row.closedDeals += 1;
+        row.closedAmount += pickNumber(d, "Amount");
+      }
+    }
+    const out = {
+      ...pipelinesCacheInfo(),
+      byStage,
+      donationType: { fieldLoaded: all.some((d) => d.Donation_Type !== undefined), byDonationType },
+    };
 
     // ?list=pipeline -> the deals behind the Overview "Pipeline 2026-2027"
     // card (approved, open, FY 2026-27), biggest first, with the category
@@ -262,7 +287,8 @@ router.get("/crm-analysis/overview", async (req, res) => {
   try {
     // ?category=rhapsody|igcc -> the same dashboard for that category's deals
     // (Other Dashboards page); without it, the normal NSNOP data.
-    const donors = await getPipelines({ category: parseDonationCategoryParam(req.query.category) });
+    const category = parseDonationCategoryParam(req.query.category);
+    const donors = await getPipelines({ category });
 
     let filtereddonors = donors;
     if (selectedTypes && selectedTypes.length > 0) {
@@ -311,8 +337,11 @@ router.get("/crm-analysis/overview", async (req, res) => {
         ? filtereddonors.filter((d) => selectedDonorTypes.includes(pick(d, "Type_of_donor")))
         : filtereddonors;
 
+    // NSNOP: approved by Rajesh and not Lost / On Hold. A Rhapsody / IGCC dashboard
+    // has no Rajesh approval, so it counts every open deal that isn't Lost / On Hold.
+    const pipelineRule = category ? isOpenPipelineStage : isApprovedOpenPipeline;
     const pipeline2027Approved = standarddonors.filter(
-      (d) => pick(d, "Fiscal_year", "") === "2026-2027" && isApprovedOpenPipeline(d)
+      (d) => pick(d, "Fiscal_year", "") === "2026-2027" && pipelineRule(d)
     );
 
     res.json({
@@ -536,6 +565,9 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
         spoc: pick(d, "Spoc"),
         expectedMonth: pick(d, "Expected_Conversion_Month"),
         approved: pick(d, "Approved_by_Rajesh"),
+        // for the stage popups: which Bigin deal this is, and when it was created
+        dealId: d.id != null ? String(d.id) : null,
+        createdTime: d.Created_Time || null,
       })),
 
       generatedAt: new Date().toISOString(),
@@ -544,6 +576,39 @@ router.get("/crm-analysis/standard-pipeline", async (req, res) => {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
+// GET /api/crm-analysis/stage-history?ids=111,222
+// The stage history of the listed deals (the ones a stage popup shows):
+//   { histories: { [dealId]: { entries: [{ stage, at }] | null, error: string | null } } }
+// `entries` is oldest first; `at` is when the deal moved INTO that stage. One
+// Bigin call per deal, a few at a time, cached for 30 minutes (stageHistoryCache.js).
+// Only ids of deals this dashboard already knows are looked up, and at most 150
+// per request, so the route can't be used to burn Bigin API credits.
+router.get("/crm-analysis/stage-history", async (req, res) => {
+  try {
+    const asked = (parseListParam(req.query.ids) || []).filter((id) => /^\d+$/.test(id)).slice(0, 150);
+    const known = new Set((await getPipelines({ category: "all" })).map((d) => String(d.id)));
+    const ids = asked.filter((id) => known.has(id));
+    const histories = ids.length ? await getStageHistories(ids) : {};
+    res.json({ histories, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/crm-analysis/stage-history-debug?dealId=111
+// Diagnostics: asks Bigin for one deal's stage history and shows every step it
+// tried, which route worked, and the first raw rows — for when a popup's
+// "In stage since" column comes up empty.
+router.get("/crm-analysis/stage-history-debug", async (req, res) => {
+  const dealId = String(req.query.dealId || "").trim();
+  if (!/^\d+$/.test(dealId)) return res.status(400).json({ error: "Pass ?dealId=<the Bigin record id of a pipeline deal>." });
+  try {
+    res.json(await debugStageHistory(dealId));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // GET /api/crm-analysis/fy-comparison?fy1=2025-2026&fy2=2026-2027
 router.get("/crm-analysis/fy-comparison", async (req, res) => {
   const fy1 = req.query.fy1 || "2025-2026";
@@ -983,7 +1048,7 @@ router.get("/crm-analysis/donor-calls", async (_req, res) => {
 //
 // The numbers behind the cards of an Other Dashboards page (Rhapsody / IGCC) and
 // of the CER Dashboard:
-// that category's closed deals and its approved open pipeline deals, one small
+// that category's closed deals and its open pipeline deals, one small
 // record per deal, so the page can total them for whichever period each card is
 // set to (this month / quarter / financial year / ...) without another request.
 // Also the category's saved yearly targets (see categoryTargetsStore.js).
@@ -1005,9 +1070,10 @@ router.get("/crm-analysis/category-dashboard", async (req, res) => {
     res.json({
       category,
       closed: deals.filter(isClosed).map((d) => ({ ...base(d), closingDate: d.Closing_Date || null })),
-      // the same "approved by Rajesh, not Lost / On Hold" rule as the Pipeline card on Overview
+      // every open deal that isn't Lost / On Hold (no "Approved by Rajesh" — that is an
+      // NSNOP step), the same rule as the Pipeline card on the Rhapsody / IGCC Overview
       pipeline: deals
-        .filter((d) => isStandardPipeline(d) && isApprovedOpenPipeline(d))
+        .filter((d) => isStandardPipeline(d) && isOpenPipelineStage(d))
         .map((d) => ({ ...base(d), expectedMonth: pick(d, "Expected_Conversion_Month", null) })),
       targets: getCategoryTargets(category),
       generatedAt: new Date().toISOString(),

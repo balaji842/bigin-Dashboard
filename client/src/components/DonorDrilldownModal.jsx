@@ -7,8 +7,12 @@ import { downloadCsv } from "../lib/csvExport.js";
 import DonorCallsModal from "./DonorCallsModal.jsx";
 import { RemarksCell, CallsCell, remarksForExport } from "./DonorExtras.jsx";
 import { useDonorExtras } from "../lib/useDonorExtras.js";
+import { useStageHistory } from "../lib/useStageHistory.js";
+import { daysBetween, fmtDate } from "../lib/stageDates.js";
+import { CreatedCell } from "./StageDates.jsx";
 
 const DEFAULT_FILTERS = { platform: null, kam: null, spoc: null, type: null, donorType: null, category: null };
+
 
 // Frozen columns: the "#" column and the Donor name stay in place while
 // every other column scrolls sideways underneath them.
@@ -43,13 +47,19 @@ function CategoryBadge({ value }) {
 // those fields the same way every /crm-analysis/* table does. Donor and
 // Amount get the same sort control used on every Donor History table.
 //
+// Lists of PIPELINE deals (the Pipeline page — rows carry `createdTime` and
+// `dealId`) also get a Created column after Amount: the date and how many days
+// ago, in red; hover it for the Creation Timeline — every stage the deal has been
+// through, with its date. It sorts. The history is loaded from the server when
+// the popup opens (useStageHistory).
+//
 // Each row also shows the donor's Bigin Remarks (Notes) and Calls (loaded
 // when the popup opens, matched by the row's `accountId`); clicking a call
 // count opens the Calls popup (`onSelectCalls`).
 function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, onSelectCalls }) {
   const { remarksById, callsById } = useDonorExtras(open);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
-  const [sortColumn, setSortColumn] = useState(null); // "account" | "amount" | null
+  const [sortColumn, setSortColumn] = useState(null); // "account" | "amount" | "created" | null
   const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
   // dummy setter — this modal has no pagination, but makeFilterHandlers
   // expects one to call after every toggle/select-all/clear-all.
@@ -62,6 +72,12 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
   // have none, so this popup looks exactly as before there. A donor with
   // no category shows as "—", which also makes "—" a pickable filter option.
   const hasCategory = useMemo(() => donors.some((d) => "category" in d), [donors]);
+  const hasCreated = useMemo(() => donors.some((d) => d.createdTime), [donors]);
+  const hasDealIds = useMemo(() => donors.some((d) => d.dealId), [donors]);
+  const dealIds = useMemo(() => (hasDealIds ? donors.map((d) => d.dealId).filter(Boolean) : []), [donors, hasDealIds]);
+  const stage = useStageHistory(dealIds, open && hasCreated && hasDealIds);
+  // The history of one row — or the reason there is none (the whole request failed).
+  const historyOf = (d) => stage.byId[d.dealId] || (stage.status === "error" ? { error: stage.error || "Stage history unavailable" } : undefined);
   const rows = useMemo(
     () => (hasCategory ? donors.map((d) => (d.category ? d : { ...d, category: "—" })) : donors),
     [donors, hasCategory]
@@ -110,7 +126,18 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         (!hasCategory || matchesFilter(d.category, filters.category))
     );
     if (sortColumn && sortDir) {
+      // Dates: oldest first = ascending. A deal with no date goes last either way.
+      const time = (v) => (v ? Date.parse(v) : NaN);
+      const byDate = (x, y) => {
+        const a = time(x);
+        const b = time(y);
+        if (Number.isNaN(a) && Number.isNaN(b)) return 0;
+        if (Number.isNaN(a)) return 1;
+        if (Number.isNaN(b)) return -1;
+        return sortDir === "asc" ? a - b : b - a;
+      };
       out = [...out].sort((a, b) => {
+        if (sortColumn === "created") return byDate(a.createdTime, b.createdTime);
         if (sortColumn === "amount") {
           return sortDir === "asc" ? (a.amount || 0) - (b.amount || 0) : (b.amount || 0) - (a.amount || 0);
         }
@@ -127,11 +154,25 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
   const handleExport = () => {
     downloadCsv(
       `${heading.replace(/[^\w\- ]+/g, "").trim() || "donor-list"}.csv`,
-      ["#", "Donor", "Amount", "Platform", "KAM", "SPOC", "Donation Type", "Donor Type", ...(hasCategory ? ["Category"] : []), "Remarks", "Calls"],
+      [
+        "#",
+        "Donor",
+        "Amount",
+        ...(hasCreated ? ["Created", "Days since created"] : []),
+        "Platform",
+        "KAM",
+        "SPOC",
+        "Donation Type",
+        "Donor Type",
+        ...(hasCategory ? ["Category"] : []),
+        "Remarks",
+        "Calls",
+      ],
       filtered.map((d, i) => [
         i + 1,
         d.account,
         d.amount,
+        ...(hasCreated ? [d.createdTime ? fmtDate(d.createdTime) : "", d.createdTime ? daysBetween(d.createdTime) : ""] : []),
         d.platform,
         d.kam,
         d.spoc,
@@ -168,7 +209,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         </div>
         <div className="overflow-y-auto flex-1">
           <div className="overflow-x-auto">
-            <table className={`w-full text-sm ${hasCategory ? "min-w-[1300px]" : "min-w-[1220px]"}`}>
+            <table className="w-full text-sm" style={{ minWidth: 1220 + (hasCategory ? 80 : 0) + (hasCreated ? 150 : 0) }}>
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100 sticky top-0 bg-white">
                 <th
@@ -203,6 +244,16 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                     onSort={setSortFor("amount")}
                   />
                 </th>
+                {hasCreated && (
+                  <th className="px-4 py-2 font-semibold">
+                    <ColumnSortMenu
+                      variant="light"
+                      label="Created"
+                      sortDir={sortColumn === "created" ? sortDir : null}
+                      onSort={setSortFor("created")}
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-2 font-semibold">
                   <HeaderFilterMenu
                     variant="light"
@@ -298,6 +349,11 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                     {d.account}
                   </td>
                   <td className="px-4 py-2 text-right whitespace-nowrap">{fullMoney(d.amount)}</td>
+                  {hasCreated && (
+                    <td className="px-4 py-2 whitespace-nowrap align-middle">
+                      <CreatedCell deal={d} history={historyOf(d)} loading={stage.status === "loading"} />
+                    </td>
+                  )}
                   <td className="px-4 py-2 whitespace-nowrap">{d.platform}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>
@@ -321,7 +377,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={hasCategory ? 11 : 10} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={10 + (hasCategory ? 1 : 0) + (hasCreated ? 1 : 0)} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No donors found for this selection.
                   </td>
                 </tr>

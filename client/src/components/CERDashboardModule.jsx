@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { moneyAutoScale, fullMoney } from "../lib/format.js";
 import { downloadCsv } from "../lib/csvExport.js";
+import HeaderFilterMenu, { matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import ColumnSortMenu from "./ColumnSortMenu.jsx";
 
 // CER Dashboard — the donations received under CER.
 //
-// A deal belongs to CER when its Category of Donation (in Bigin) is "CER", or
-// its company name carries the tag "(CER)". Only CLOSED deals are donations
+// A deal belongs to CER when its Donation Type (the Donation Type field of the
+// deal in Bigin's Pipelines module) is "CER". Only CLOSED deals are donations
 // received, so only those are used here. The page loads one small record per
 // donation (/api/crm-analysis/category-dashboard?category=cer) and does the
 // totals itself.
@@ -20,6 +22,10 @@ import { downloadCsv } from "../lib/csvExport.js";
 //   - Financial Year cards for last and this financial year (they follow the
 //     Type pills, not the date range).
 //   - Donation Details: one row per donation, with search and Export.
+//       Column filters on Type, KAM, SPOC and Month (checkbox lists, like the other
+//       tables), and sorting from the header like the other tables: click the arrows
+//       icon on Donor Name (A → Z, then Z → A) or Amount (low to high, then high to
+//       low); a third click turns the sort off. Newest first when no sort is chosen.
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -28,6 +34,8 @@ const MONTH_NAMES = [
 const MONTH_SHORT = MONTH_NAMES.map((m) => m.slice(0, 3));
 const TYPE_ORDER = ["Cash", "Kind", "School Engagement"];
 const PAGE_SIZE = 10;
+const FILTER_FIELDS = ["type", "kam", "spoc", "monthLabel"];
+const EMPTY_COL_FILTERS = { type: null, kam: null, spoc: null, monthLabel: null };
 
 // ------------------------------------------------------------------ dates
 const fmtDate = (iso) => `${iso.slice(8, 10)} ${MONTH_SHORT[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
@@ -256,6 +264,9 @@ export default function CERDashboardModule() {
   const [selectedTypes, setSelectedTypes] = useState(null); // null = every Type shown
   const [range, setRange] = useState({ key: "recent" });
   const [search, setSearch] = useState("");
+  // Column filters (null = every value) and the sort chosen in the header.
+  const [colFilters, setColFilters] = useState(EMPTY_COL_FILTERS);
+  const [sort, setSort] = useState({ field: null, dir: null }); // field: "account" | "amount"
   const [page, setPage] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef(null);
@@ -328,18 +339,52 @@ export default function CERDashboardModule() {
   ];
   const rangeLabel = bounds ? `${fmtDate(bounds.from)} - ${fmtDate(bounds.to)}` : "All time";
 
-  // Donation Details: newest first, then the search box.
+  // Donation Details. `sorted` = everything in the date range, newest first. The
+  // table then applies the column filters, the search box and finally the sort
+  // chosen in the header (newest first when none is chosen).
   const sorted = useMemo(
     () => [...inRange].sort((a, b) => String(b.closingDate || "").localeCompare(String(a.closingDate || ""))),
     [inRange]
   );
+  const withMonth = useMemo(() => sorted.map((d) => ({ ...d, monthLabel: monthLabel(d) })), [sorted]);
+
+  // What each column filter offers: the values in the date range (so a list
+  // never shrinks as other filters are applied). Months newest first.
+  const optionsByField = useMemo(() => {
+    const uniq = (get) => [...new Set(withMonth.map(get).filter(Boolean))];
+    const alpha = (a, b) => a.localeCompare(b);
+    return {
+      type: uniq((d) => d.type).sort((a, b) => {
+        const ia = TYPE_ORDER.indexOf(a);
+        const ib = TYPE_ORDER.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || alpha(a, b);
+      }),
+      kam: uniq((d) => d.kam).sort(alpha),
+      spoc: uniq((d) => d.spoc).sort(alpha),
+      monthLabel: uniq((d) => d.monthLabel),
+    };
+  }, [withMonth]);
+  const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setColFilters, setPage, optionsByField);
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return sorted;
-    return sorted.filter((d) => `${d.account} ${d.kam} ${d.spoc} ${d.type} ${monthLabel(d)}`.toLowerCase().includes(q));
-  }, [sorted, search]);
+    let out = withMonth.filter((d) => FILTER_FIELDS.every((f) => matchesFilter(d[f], colFilters[f])));
+    if (q) out = out.filter((d) => `${d.account} ${d.kam} ${d.spoc} ${d.type} ${d.monthLabel}`.toLowerCase().includes(q));
+    if (sort.field && sort.dir) {
+      const sign = sort.dir === "asc" ? 1 : -1;
+      out = [...out].sort((a, b) =>
+        sort.field === "amount"
+          ? sign * (a.amount - b.amount)
+          : sign * String(a.account).localeCompare(String(b.account), undefined, { sensitivity: "base" })
+      );
+    }
+    return out;
+  }, [withMonth, colFilters, search, sort]);
 
-  useEffect(() => setPage(0), [search, selectedTypes, range]);
+  // A different date range or Type pill changes which values exist, so start the
+  // column filters afresh rather than leave a stale selection hiding rows.
+  useEffect(() => setColFilters(EMPTY_COL_FILTERS), [selectedTypes, range]);
+  useEffect(() => setPage(0), [search, selectedTypes, range, colFilters, sort]);
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
   const start = safePage * PAGE_SIZE;
@@ -351,7 +396,7 @@ export default function CERDashboardModule() {
   const exportRows = (list, name) => {
     downloadCsv(
       name,
-      ["#", "Donor Name", "Amount", "Type", "KAM", "SPOC", "Month", "Closing Date"],
+      ["S.No", "Donor Name", "Amount", "Type", "KAM", "SPOC", "Month", "Closing Date"],
       list.map((d, i) => [i + 1, d.account, d.amount, d.type, d.kam, d.spoc, monthLabel(d), String(d.closingDate || "").slice(0, 10)])
     );
     setExportOpen(false);
@@ -395,11 +440,11 @@ export default function CERDashboardModule() {
         <DateRangePicker range={range} label={rangeLabel} presets={presets} onChange={setRange} />
       </div>
 
-      {/* {deals.length === 0 && (
+      {deals.length === 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          No CER donations found in Bigin yet. A deal counts as CER when its Category of Donation is "CER" or its company name ends with "(CER)", and only closed deals are donations received.
+          No CER donations found. A deal counts as CER when its Donation Type is "CER", and only closed deals are donations received.
         </div>
-      )} */}
+      )}
 
       {/* Total Donation Amount / Total Donors */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
@@ -414,7 +459,6 @@ export default function CERDashboardModule() {
                 <p className="font-display text-4xl font-bold text-blue-600" title={fullMoney(totalAmount)}>{moneyAutoScale(totalAmount)}</p>
                 <TrendBadge pct={amountPct} />
               </div>
-              <p className="text-sm text-slate-500">Total donations received ({activeTypes.join(" + ")})</p>
             </div>
           </div>
           <BarsArt className="absolute right-6 top-1/2 h-20 w-24 -translate-y-1/2 text-blue-300/70 hidden sm:block" />
@@ -505,11 +549,11 @@ export default function CERDashboardModule() {
                 <div className="absolute right-0 z-30 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
                   <button type="button" disabled={rows.length === 0} onClick={() => exportRows(rows, "cer-donations.csv")} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40">
                     Current view <span className="text-slate-400">({rows.length})</span>
-                    <span className="block text-xs text-slate-400">What the table shows, with the search</span>
+                    <span className="block text-xs text-slate-400">What the table shows, with its filters, search and sort</span>
                   </button>
                   <button type="button" disabled={sorted.length === 0} onClick={() => exportRows(sorted, "cer-donations-date-range.csv")} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40">
                     Everything in the date range <span className="text-slate-400">({sorted.length})</span>
-                    <span className="block text-xs text-slate-400">Ignores the search box</span>
+                    <span className="block text-xs text-slate-400">Ignores the column filters and the search box</span>
                   </button>
                 </div>
               )}
@@ -521,13 +565,41 @@ export default function CERDashboardModule() {
           <table className="w-full text-sm min-w-[820px]">
             <thead>
               <tr className="bg-slate-100/70 text-left text-navy-900">
-                <th className="px-4 py-3 font-semibold rounded-l-lg w-12">#</th>
-                <th className="px-4 py-3 font-semibold">Donor Name</th>
-                <th className="px-4 py-3 font-semibold">Amount</th>
-                <th className="px-4 py-3 font-semibold">Type</th>
-                <th className="px-4 py-3 font-semibold">KAM</th>
-                <th className="px-4 py-3 font-semibold">SPOC</th>
-                <th className="px-4 py-3 font-semibold rounded-r-lg">Month</th>
+                <th className="px-4 py-3 font-semibold rounded-l-lg w-12">S.No</th>
+                <th className="px-4 py-3 font-semibold">
+                  <ColumnSortMenu
+                    variant="light"
+                    label="Donor Name"
+                    sortDir={sort.field === "account" ? sort.dir : null}
+                    onSort={(dir) => setSort(dir ? { field: "account", dir } : { field: null, dir: null })}
+                  />
+                </th>
+                <th className="px-4 py-3 font-semibold">
+                  <ColumnSortMenu
+                    variant="light"
+                    label="Amount"
+                    sortDir={sort.field === "amount" ? sort.dir : null}
+                    onSort={(dir) => setSort(dir ? { field: "amount", dir } : { field: null, dir: null })}
+                  />
+                </th>
+                {[
+                  ["type", "Type"],
+                  ["kam", "KAM"],
+                  ["spoc", "SPOC"],
+                  ["monthLabel", "Month"],
+                ].map(([field, label], i, all) => (
+                  <th key={field} className={`px-4 py-3 font-semibold ${i === all.length - 1 ? "rounded-r-lg" : ""}`}>
+                    <HeaderFilterMenu
+                      variant="light"
+                      label={label}
+                      options={optionsByField[field] || []}
+                      selected={colFilters[field]}
+                      onToggle={toggleOption(field)}
+                      onSelectAll={selectAll(field)}
+                      onClearAll={clearAll(field)}
+                    />
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>

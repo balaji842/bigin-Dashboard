@@ -1,4 +1,4 @@
-import { fetchAllRecords } from "../zohoClient.js";
+import { fetchAllPipelines } from "../zohoClient.js";
 import { applyDonationScope, matchesDonationCategory } from "./dealHelpers.js";
 
 // Every /crm-analysis/* route needs the full Pipelines dataset. Pulling
@@ -37,7 +37,7 @@ function startFetch() {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
-      const all = await fetchAllRecords("Pipelines");
+      const all = await fetchAllPipelines();
       const { kept, info } = applyDonationScope(all);
       scopeInfo = info;
       console.log(

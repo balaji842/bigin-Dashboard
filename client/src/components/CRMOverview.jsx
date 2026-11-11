@@ -247,8 +247,9 @@ function fyLabel(fys) {
 // Type cards and the Donor History table — with that content (the Rhapsody
 // dashboard uses it for its cards). `showTotalConversion={false}` drops the
 // "Total Conversion FY 2022-2027" card and shows the FY 2026-2027 card first,
-// then the Pipeline 2026-2027 card.
-export default function CRMOverview({ category = null, hideFilters = false, afterFiscalYear = null, showTotalConversion = true } = {}) {
+// then the Pipeline 2026-2027 card. `showTopCards={false}` drops that whole row of
+// cards (nothing between the filters and "Closed donors by Fiscal Year").
+export default function CRMOverview({ category = null, hideFilters = false, afterFiscalYear = null, showTotalConversion = true, showTopCards = true } = {}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -515,6 +516,7 @@ export default function CRMOverview({ category = null, hideFilters = false, afte
       </>
       )}
 
+      {showTopCards && (
       <div className={`grid grid-cols-1 gap-4 ${showTotalConversion ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
         {showTotalConversion ? (
           <>
@@ -529,6 +531,7 @@ export default function CRMOverview({ category = null, hideFilters = false, afte
           </>
         )}
       </div>
+      )}
 
       <div>
         <p className="font-display font-semibold text-navy-900 mb-3 text-sm">Closed donors by Fiscal Year</p>

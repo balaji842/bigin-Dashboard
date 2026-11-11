@@ -10,19 +10,19 @@ import CategoryDashboardCards from "./CategoryDashboardCards.jsx";
 // exactly one is always on. Switching shows that category's dashboard, built
 // only from the deals of the selected category.
 //
-// Both dashboards have the same layout: the Overview dashboard's FY 2026-2027
-// and Pipeline 2026-2027 cards, then "Closed donors by Fiscal Year" (no Total
-// Conversion card, no Type / Platform filters), followed
-// by the six cards — Conversion Donation Amount, Pipeline Donation Type, Target
-// Amount, Platform, KAM Conversion Amount, KAM Pipeline Amount (see
-// CategoryDashboardCards.jsx). Set `cards: false` on a dashboard below to show
-// the full Overview dashboard for it instead.
+// Both dashboards show "Closed donors by Fiscal Year" (no Total Conversion card,
+// no Type / Platform filters) followed by the six cards — Conversion Donation
+// Amount, Pipeline Donation Type, Target Amount, Platform, KAM Conversion Amount,
+// KAM Pipeline Amount (see CategoryDashboardCards.jsx). Rhapsody also keeps the
+// FY 2026-2027 and Pipeline 2026-2027 cards above that; IGCC does not
+// (`topCards: false` below). Set `cards: false` on a dashboard to show the full
+// Overview dashboard for it instead.
 //
 // The dashboard is remounted on every switch (`key`), so the filters picked
 // on one dashboard never carry over to the other.
 const DASHBOARDS = [
-  { key: "rhapsody", label: "Rhapsody", cards: true },
-  { key: "igcc", label: "IGCC", cards: true },
+  { key: "rhapsody", label: "Rhapsody", cards: true, topCards: true },
+  { key: "igcc", label: "IGCC", cards: true, topCards: false },
 ];
 
 export default function OtherDashboardsModule() {
@@ -62,6 +62,7 @@ export default function OtherDashboardsModule() {
           category={selected}
           hideFilters
           showTotalConversion={false}
+          showTopCards={current.topCards}
           afterFiscalYear={<CategoryDashboardCards category={selected} />}
         />
       ) : (
@@ -69,4 +70,4 @@ export default function OtherDashboardsModule() {
       )}
     </div>
   );
-}
+}  

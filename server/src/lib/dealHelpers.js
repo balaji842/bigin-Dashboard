@@ -48,10 +48,10 @@ export function isClosed(deal) {
 //       /api/crm-analysis/data-scope?list=blank lists these deals' companies.
 //   - a category that IS set always wins over the company-name tag.
 // ---------------------------------------------------------------------
-// The categories that have a dashboard of their own (Other Dashboards: Rhapsody,
-// IGCC; and the CER Dashboard). None of them is NSNOP, so none is counted on
-// the NSNOP pages. A deal is CER when its Category of Donation is "CER" or its
-// company name carries the tag "(CER)".
+// The dashboards that take their own slice of the deals: Rhapsody and IGCC
+// (Other Dashboards — by Category of Donation, so not NSNOP) and CER (the CER
+// Dashboard — by Donation Type; see isCerDeal below). `?category=` on a route
+// accepts these.
 export const EXCLUDED_DONATION_CATEGORIES = ["rhapsody", "igcc", "cer"];
 
 // Optional manual list, for blank-category deals whose company has no
@@ -70,7 +70,6 @@ export const DONATION_CATEGORY_BY_COMPANY = {
 const COMPANY_TAGS = [
   { label: "Rhapsody", pattern: /\([^)]*\brhapsody\b[^)]*\)/i },
   { label: "IGCC", pattern: /\([^)]*\bigcc\b[^)]*\)/i },
-  { label: "CER", pattern: /\([^)]*\bcer\b[^)]*\)/i },
 ];
 function companyTagCategory(deal) {
   const acc = deal?.Account_Name;
@@ -85,7 +84,7 @@ const normCompany = (name) => String(name ?? "").replace(/\s+/g, " ").trim().toL
 const COMPANY_CATEGORY = new Map(
   Object.entries(DONATION_CATEGORY_BY_COMPANY).map(([name, cat]) => [normCompany(name), String(cat).trim().toLowerCase()])
 );
-const CATEGORY_LABEL = { rhapsody: "Rhapsody", igcc: "IGCC", cer: "CER" };
+const CATEGORY_LABEL = { rhapsody: "Rhapsody", igcc: "IGCC" };
 
 // The Category of Donation exactly as set in Bigin, as plain text ("" when
 // blank). Handles a plain picklist value, a lookup-style { name } object, or
@@ -131,9 +130,26 @@ export function parseDonationCategoryParam(value) {
   return EXCLUDED_DONATION_CATEGORIES.includes(v) ? v : null;
 }
 
-// True when the deal's category contains `key` ("rhapsody" / "igcc" / "cer") as a
-// whole word, so a short key like "cer" can never match inside another word.
+// The deal's Donation Type (the Bigin field of that name) as plain text, "" when
+// blank — handles a plain picklist value, a { name } object or a multi-select list.
+export function donationTypeOf(deal) {
+  const v = deal?.Donation_Type;
+  if (v == null) return "";
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "object" ? x?.name ?? x?.value ?? "" : String(x))).join(", ").trim();
+  if (typeof v === "object") return String(v.name ?? v.value ?? "").trim();
+  return String(v).trim();
+}
+
+// CER donations: the deals whose Donation Type is CER. (Their Category of
+// Donation is NSNOP, so they also stay in the NSNOP pages.)
+export function isCerDeal(deal) {
+  return /\bcer\b/i.test(donationTypeOf(deal));
+}
+
+// True when the deal belongs to the slice named by `key`: "cer" by Donation Type;
+// "rhapsody" / "igcc" by category, as a whole word.
 export function matchesDonationCategory(deal, key) {
+  if (key === "cer") return isCerDeal(deal);
   return new RegExp(`\\b${key}\\b`, "i").test(donationCategoryOf(deal));
 }
 
@@ -184,6 +200,15 @@ export function isApprovedByRajesh(deal) {
 export function isApprovedOpenPipeline(deal) {
   const stage = pick(deal, "Stage", "").toLowerCase();
   return isApprovedByRajesh(deal) && !stage.includes("lost") && !stage.includes("on hold");
+}
+
+// The open-pipeline rule of the Rhapsody and IGCC dashboards: an open (Standard
+// Pipeline) deal that isn't Lost or On Hold. Unlike the NSNOP rule above it does
+// NOT need "Approved by Rajesh" — that approval belongs to the NSNOP process, and
+// Rhapsody / IGCC deals don't go through it.
+export function isOpenPipelineStage(deal) {
+  const stage = pick(deal, "Stage", "").toLowerCase();
+  return !stage.includes("lost") && !stage.includes("on hold");
 }
 
 // Distinct donor count by Account_Name. Uses the lookup's id when present
@@ -1107,4 +1132,37 @@ export function donorsByYearFilter(donors, { includeFYs = [], excludeFYs = [] } 
   }
 
   return rows.sort((a, b) => b.totalAmount - a.totalAmount);
+}
+
+
+// ── Stage history ───────────────────────────────────────────────────────
+// Bigin rows → a clean, oldest-first timeline: [{ stage, at }] where `at` is
+// the moment the deal moved INTO that stage (ISO string). Handles the Stage
+// History related list ({ Stage / Moved_To, Modified_Time … }) and the
+// timeline events ({ audited_time, field_history: [{ api_name: "Stage", _value: { new } }] }).
+// Rows without a stage or a time are dropped; the same stage twice in a row
+// is kept once (the first time it was entered).
+const textOf = (v) => {
+  if (v == null) return "";
+  if (typeof v === "object") return String(v.name ?? v.value ?? v.display_value ?? "").trim();
+  return String(v).trim();
+};
+
+export function normalizeStageHistory(rows, source = "related") {
+  const raw = [];
+  for (const r of rows || []) {
+    if (source === "timeline") {
+      const change = (r.field_history || []).find((f) => String(f.api_name || f.field_label || "").toLowerCase() === "stage");
+      const stage = textOf(change?._value?.new ?? change?.value?.new);
+      if (stage) raw.push({ stage, at: r.audited_time || r.time || null });
+    } else {
+      const stage = textOf(r.Stage ?? r.Moved_To ?? r.Stage_Name);
+      const at = r.Modified_Time ?? r.Last_Modified_Time ?? r.Time ?? r.Created_Time ?? null;
+      if (stage) raw.push({ stage, at });
+    }
+  }
+  const timed = raw.filter((e) => e.at && !Number.isNaN(Date.parse(e.at))).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const out = [];
+  for (const e of timed) if (!out.length || out[out.length - 1].stage !== e.stage) out.push({ stage: e.stage, at: new Date(e.at).toISOString() });
+  return out;
 }
