@@ -32,6 +32,7 @@ import {
   donationCategoryOf,
   isExcludedDonationCategory,
   donationTypeOf,
+  donorFieldOf,
 } from "../lib/dealHelpers.js";
 import { getNotes, invalidateNotesCache } from "../lib/notesCache.js";
 import { getCalls, invalidateCallsCache } from "../lib/callsCache.js";
@@ -196,6 +197,8 @@ router.get("/crm-analysis/data-scope", async (req, res) => {
       ...pipelinesCacheInfo(),
       byStage,
       donationType: { fieldLoaded: all.some((d) => d.Donation_Type !== undefined), byDonationType },
+      // false = the pipeline's Donor field didn't come through from Bigin (the Donor column is then empty)
+      donorField: { loaded: all.some((d) => d.Donor_Field !== undefined), dealsWithAValue: all.filter((d) => donorFieldOf(d)).length },
     };
 
     // ?list=pipeline -> the deals behind the Overview "Pipeline 2026-2027"
@@ -390,6 +393,8 @@ router.get("/crm-analysis/overview", async (req, res) => {
         kam: pick(d, "Pipeline_KAM"),
         platform: pick(d, "Platform"),
         spoc: pick(d, "Spoc"),
+        // Bigin's "Donor" field on the pipeline (the Donor History table's Donor column)
+        donor: donorFieldOf(d),
         fiscalYear: pick(d, "Fiscal_year"),
         closingDate: d.Closing_Date || null,
         expectedMonth: pick(d, "Expected_Conversion_Month", null),

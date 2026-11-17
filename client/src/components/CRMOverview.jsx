@@ -140,16 +140,33 @@ function TypeFilterPills({ label, options, selected, onToggle }) {
   );
 }
 
+// A / B / C donor category, from the Total Amount the table shows (the same
+// thresholds as the Engagement Status page): A above ₹1 Cr, B ₹50 L to ₹1 Cr,
+// C below ₹50 L. null when the donor has nothing closed in the current scope.
+const CATEGORY_A_ABOVE = 10000000; // ₹1 Cr
+const CATEGORY_B_FROM = 5000000; // ₹50 L
+function categoryForAmount(total) {
+  if (!(total > 0)) return null;
+  if (total > CATEGORY_A_ABOVE) return "A";
+  if (total >= CATEGORY_B_FROM) return "B";
+  return "C";
+}
+
 // Collapses the raw per-deal table into one row per donor (Account_Name)
-// for the Donor History table: total amount across every deal, plus the
-// distinct Donor Type(s)/KAM(s)/SPOC(s) that appear across that donor's
-// donors — joined with ", " when a donor has more than one of any of
-// these. Each donor's full list of underlying donors is kept as `donors`
-// so the drilldown modal can show fiscal-year splits, months, and
-// per-deal engagement type without a second network call. `accountIds` are
+// for the Donor History table: total amount across the donor's deals, plus the
+// distinct Donor Type(s)/KAM(s)/SPOC(s)/Donor(s) that appear across those
+// deals — joined with ", " when a donor has more than one of any of these.
+//
+// `fys` (the fiscal-year card(s) selected above; null = every year) decides
+// WHICH deals feed the row: only deals of those years count toward its Total
+// Amount, Category and attribute columns, and a donor with no deal in those
+// years has no row. Each donor's FULL list of deals is kept as `donors`
+// whatever `fys` is, so the drilldown modal can always show every fiscal year,
+// month and engagement type without a second network call. `accountIds` are
 // the Bigin company id(s) behind the donor — used to look up its Remarks
 // (Bigin Notes).
-function buildDonorHistory(table) {
+function buildDonorHistory(table, fys = null) {
+  const wanted = fys && fys.length > 0 ? new Set(fys) : null;
   const byAccount = {};
   for (const row of table) {
     if (!row.account || row.account === "Unspecified") continue;
@@ -157,15 +174,21 @@ function buildDonorHistory(table) {
       byAccount[row.account] = {
         account: row.account,
         totalAmount: 0,
+        inScope: 0,
         donorTypes: new Set(),
         kams: new Set(),
         spocs: new Set(),
         platforms: new Set(),
+        donorNames: new Set(),
         accountIds: new Set(),
         donors: [],
       };
     }
     const entry = byAccount[row.account];
+    if (row.accountId) entry.accountIds.add(row.accountId);
+    entry.donors.push(row);
+    if (wanted && !wanted.has(row.fiscalYear)) continue;
+    entry.inScope += 1;
     // Only closed/converted deals count toward the table's Total
     // Amount — pipeline (not-yet-closed) amounts are intentionally left
     // out here. They're still visible per-donor via the FY-split popup
@@ -177,18 +200,23 @@ function buildDonorHistory(table) {
     if (row.kam && row.kam !== "Unspecified") entry.kams.add(row.kam);
     if (row.spoc && row.spoc !== "Unspecified") entry.spocs.add(row.spoc);
     if (row.platform && row.platform !== "Unspecified") entry.platforms.add(row.platform);
-    if (row.accountId) entry.accountIds.add(row.accountId);
-    entry.donors.push(row);
+    // Bigin's "Donor" field — distinct values across the donor's deals, like SPOC.
+    if (row.donor && row.donor !== "Unspecified") entry.donorNames.add(row.donor);
   }
 
   return Object.values(byAccount)
+    .filter((d) => d.inScope > 0)
     .map((d) => ({
       account: d.account,
       totalAmount: d.totalAmount,
+      category: categoryForAmount(d.totalAmount),
       donorType: [...d.donorTypes].join(", ") || "—",
       kam: [...d.kams].join(", ") || "—",
       spoc: [...d.spocs].join(", ") || "—",
       platform: [...d.platforms].join(", ") || "—",
+      donor: [...d.donorNames].join(", ") || "—",
+      // the same values as a list — a donor name can itself contain a comma ("Bank Of America, N.A.")
+      donorList: [...d.donorNames],
       accountIds: [...d.accountIds],
       donors: d.donors,
     }))
@@ -400,22 +428,26 @@ export default function CRMOverview({ category = null, hideFilters = false, afte
     return buildMonthDonors(data.table, modalMonth, data.fy);
   }, [data, modalMonth]);
 
-  // Donor History table aggregates across the FULL raw table (every
-  // fiscal year, closed + standard pipeline) — not scoped to the
-  // currently-selected `fy`, since the point of this table is to search
-  // any donor's entire history regardless of which year is picked above.
+  // The Donor History table follows the fiscal-year card(s) selected above (and
+  // the Donor Type cards / Type / Platform filters, which narrow `data.table`
+  // on the server): a donor's row shows only the deals of the selected
+  // year(s). With no year card selected it covers every year.
+  //
+  // Clicking a donor's name still opens their FULL history — every year — so
+  // each row carries `fullHistory`, built from all of the donor's deals.
   // Each donor also gets its `remarks` (the Bigin Notes on its company
   // record(s)) and its `calls` (the Bigin calls about it), both newest first.
   const donorHistory = useMemo(() => {
     if (!data) return [];
-    return buildDonorHistory(data.table).map((d) => {
+    const fullByAccount = Object.fromEntries(buildDonorHistory(data.table, null).map((d) => [d.account, d]));
+    return buildDonorHistory(data.table, selectedFYs).map((d) => {
       const remarks = d.accountIds.flatMap((id) => remarksById[id] || []);
       remarks.sort((a, b) => String(b.createdTime || "").localeCompare(String(a.createdTime || "")));
       const calls = d.accountIds.flatMap((id) => callsById[id] || []);
       calls.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-      return { ...d, remarks, calls };
+      return { ...d, remarks, calls, fullHistory: fullByAccount[d.account] || d };
     });
-  }, [data, remarksById, callsById]);
+  }, [data, selectedFYs, remarksById, callsById]);
 
   if (loading && !data) {
     return (
@@ -652,7 +684,8 @@ export default function CRMOverview({ category = null, hideFilters = false, afte
       <DonorHistoryTable
         ref={donorTableRef}
         donors={donorHistory}
-        onSelectDonor={setModalDonor}
+        scopeLabel={fyLabel(selectedFYs)}
+        onSelectDonor={(d) => setModalDonor(d.fullHistory || d)}
         onSelectCalls={setModalCallsDonor}
         onFiltersActiveChange={setTableFiltersActive}
         remarksNote={remarksNote}

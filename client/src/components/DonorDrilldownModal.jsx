@@ -11,7 +11,7 @@ import { useStageHistory } from "../lib/useStageHistory.js";
 import { daysBetween, fmtDate } from "../lib/stageDates.js";
 import { CreatedCell } from "./StageDates.jsx";
 
-const DEFAULT_FILTERS = { platform: null, kam: null, spoc: null, type: null, donorType: null, category: null };
+const DEFAULT_FILTERS = { platform: null, kam: null, spoc: null, type: null, donorType: null, category: null, stageName: null };
 
 
 // Frozen columns: the "#" column and the Donor name stay in place while
@@ -51,7 +51,9 @@ function CategoryBadge({ value }) {
 // `dealId`) also get a Created column after Amount: the date and how many days
 // ago, in red; hover it for the Creation Timeline — every stage the deal has been
 // through, with its date. It sorts. The history is loaded from the server when
-// the popup opens (useStageHistory).
+// the popup opens (useStageHistory). They also get a Stages column right after
+// it — the stage each deal is in right now — which can be filtered like KAM or
+// Platform.
 //
 // Each row also shows the donor's Bigin Remarks (Notes) and Calls (loaded
 // when the popup opens, matched by the row's `accountId`); clicking a call
@@ -73,6 +75,8 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
   // no category shows as "—", which also makes "—" a pickable filter option.
   const hasCategory = useMemo(() => donors.some((d) => "category" in d), [donors]);
   const hasCreated = useMemo(() => donors.some((d) => d.createdTime), [donors]);
+  // Pipeline lists (they carry the deal's stage): a Stages column, the stage each deal is in now.
+  const hasStages = useMemo(() => hasCreated && donors.some((d) => d.stage), [donors, hasCreated]);
   const hasDealIds = useMemo(() => donors.some((d) => d.dealId), [donors]);
   const dealIds = useMemo(() => (hasDealIds ? donors.map((d) => d.dealId).filter(Boolean) : []), [donors, hasDealIds]);
   const stage = useStageHistory(dealIds, open && hasCreated && hasDealIds);
@@ -100,6 +104,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
   const typeOptions = useMemo(() => optionsFor(rows, "type"), [rows]);
   const donorTypeOptions = useMemo(() => optionsFor(rows, "donorType"), [rows]);
   const categoryOptions = useMemo(() => (hasCategory ? optionsFor(rows, "category") : []), [rows, hasCategory]);
+  const stageOptions = useMemo(() => (hasStages ? optionsFor(rows, "stage") : []), [rows, hasStages]);
   const optionsByField = {
     platform: platformOptions,
     kam: kamOptions,
@@ -107,6 +112,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
     type: typeOptions,
     donorType: donorTypeOptions,
     category: categoryOptions,
+    stageName: stageOptions,
   };
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPageNoop, optionsByField);
 
@@ -123,7 +129,8 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         matchesFilter(d.spoc, filters.spoc) &&
         matchesFilter(d.type, filters.type) &&
         matchesFilter(d.donorType, filters.donorType) &&
-        (!hasCategory || matchesFilter(d.category, filters.category))
+        (!hasCategory || matchesFilter(d.category, filters.category)) &&
+        (!hasStages || matchesFilter(d.stage, filters.stageName))
     );
     if (sortColumn && sortDir) {
       // Dates: oldest first = ascending. A deal with no date goes last either way.
@@ -145,7 +152,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
       });
     }
     return out;
-  }, [rows, hasCategory, filters, sortColumn, sortDir]);
+  }, [rows, hasCategory, hasStages, filters, sortColumn, sortDir]);
 
   // Sums whatever's currently shown, so this updates as the column
   // filters narrow the list — same idea as the donor count next to it.
@@ -159,6 +166,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         "Donor",
         "Amount",
         ...(hasCreated ? ["Created", "Days since created"] : []),
+        ...(hasStages ? ["Stages"] : []),
         "Platform",
         "KAM",
         "SPOC",
@@ -173,6 +181,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         d.account,
         d.amount,
         ...(hasCreated ? [d.createdTime ? fmtDate(d.createdTime) : "", d.createdTime ? daysBetween(d.createdTime) : ""] : []),
+        ...(hasStages ? [d.stage || ""] : []),
         d.platform,
         d.kam,
         d.spoc,
@@ -209,7 +218,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         </div>
         <div className="overflow-y-auto flex-1">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" style={{ minWidth: 1220 + (hasCategory ? 80 : 0) + (hasCreated ? 150 : 0) }}>
+            <table className="w-full text-sm" style={{ minWidth: 1220 + (hasCategory ? 80 : 0) + (hasCreated ? 150 : 0) + (hasStages ? 210 : 0) }}>
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100 sticky top-0 bg-white">
                 <th
@@ -251,6 +260,19 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                       label="Created"
                       sortDir={sortColumn === "created" ? sortDir : null}
                       onSort={setSortFor("created")}
+                    />
+                  </th>
+                )}
+                {hasStages && (
+                  <th className="px-4 py-2 font-semibold">
+                    <HeaderFilterMenu
+                      variant="light"
+                      label="Stages"
+                      options={stageOptions}
+                      selected={filters.stageName}
+                      onToggle={toggleOption("stageName")}
+                      onSelectAll={selectAll("stageName")}
+                      onClearAll={clearAll("stageName")}
                     />
                   </th>
                 )}
@@ -354,6 +376,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                       <CreatedCell deal={d} history={historyOf(d)} loading={stage.status === "loading"} />
                     </td>
                   )}
+                  {hasStages && <td className="px-4 py-2 whitespace-nowrap">{d.stage || "—"}</td>}
                   <td className="px-4 py-2 whitespace-nowrap">{d.platform}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>
@@ -377,7 +400,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10 + (hasCategory ? 1 : 0) + (hasCreated ? 1 : 0)} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={10 + (hasCategory ? 1 : 0) + (hasCreated ? 1 : 0) + (hasStages ? 1 : 0)} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No donors found for this selection.
                   </td>
                 </tr>

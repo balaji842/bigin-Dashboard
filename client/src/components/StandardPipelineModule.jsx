@@ -96,16 +96,17 @@ function KpiCard({ label, amount, donors, accent = "pink", active, onClick, onDo
   );
 }
 
-// The Bigin pipeline's stages, in pipeline order — the By Stage table
-// lists stages in this order (only the ones that currently have deals).
+// The order of the By Stage table (only the stages that currently have
+// deals are listed): Meeting Scheduled first, then the Bigin pipeline's
+// stages in pipeline order.
 const STAGE_ORDER = [
+  "Meeting Scheduled",
   "No contact information",
   "Contact research",
   "Calls / Meeting Scheduled",
   "Outreach Email / Letter Sent",
   "Budget discussion",
   "Requirement Identification",
-  "Meeting Scheduled",
   "Requirement Confirmation (SMC)",
   "Proposal Created (Cash/Material)",
   "Proposal shared",
@@ -144,6 +145,19 @@ function orderStages(rows) {
     return r == null ? 1000 : r;
   };
   return [...rows].sort((a, b) => rank(a.name) - rank(b.name) || b.amount - a.amount);
+}
+
+// Donor rows in pipeline-stage order (the same order as the By Stage table):
+// Meeting Scheduled first … MS Sign Pending / DSE Sign pending last. Rows in
+// the same stage keep the order they came in (a stable sort), and a stage that
+// isn't in the list goes after the listed ones. Used for the month popups.
+function sortRowsByStage(rows) {
+  const rank = (stage) => {
+    if (!stage || stage === "Unspecified") return Number.MAX_SAFE_INTEGER;
+    const r = STAGE_RANK.get(stageKey(stage));
+    return r == null ? 1000 : r;
+  };
+  return [...rows].sort((a, b) => rank(a.stage) - rank(b.stage));
 }
 
 // Client-side equivalent of the server's groupSummary() — amount sum +
@@ -874,7 +888,7 @@ export default function StandardPipelineModule() {
                               type="button"
                               onClick={() =>
                                 m.donors > 0 &&
-                                openDrilldown(m.name, filterRows(scoped.table, (r) => r.expectedMonth === m.name))
+                                openDrilldown(m.name, sortRowsByStage(filterRows(scoped.table, (r) => r.expectedMonth === m.name)))
                               }
                               disabled={m.donors === 0}
                               className={`font-semibold ${

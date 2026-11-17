@@ -14,6 +14,50 @@ function IconSearch(props) {
   );
 }
 
+function IconFunnel(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M4 5h16l-6 7v6l-4 2v-8L4 5z" />
+    </svg>
+  );
+}
+
+// Header with a one-click "Is not empty" filter (like Bigin's): on, only the
+// rows that have a value in this column stay; off, every row is back.
+function NotEmptyHeader({ label, active, onClick, onTitle, offTitle }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span>{label}</span>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        aria-label={offTitle}
+        title={active ? onTitle : offTitle}
+        className={`p-0.5 rounded transition-colors ${active ? "text-pink-400" : "text-white/70 hover:text-white"}`}
+      >
+        <IconFunnel className="w-3.5 h-3.5" />
+      </button>
+    </span>
+  );
+}
+
+// A / B / C — from the Total Amount shown on the row (A above ₹1 Cr, B ₹50 L to
+// ₹1 Cr, C below ₹50 L); "—" when the donor has nothing closed in the current scope.
+const CATEGORY_STYLES = {
+  A: "bg-emerald-50 text-emerald-700",
+  B: "bg-sky-50 text-sky-700",
+  C: "bg-slate-100 text-slate-600",
+};
+function CategoryBadge({ value }) {
+  if (!value) return <span className="text-slate-300">—</span>;
+  return (
+    <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${CATEGORY_STYLES[value] || "bg-slate-100 text-slate-600"}`}>
+      {value}
+    </span>
+  );
+}
+
 function IconChevronLeft(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -155,6 +199,60 @@ function RemarksCell({ notes }) {
   );
 }
 
+const POPUP_DONORS = 15; // how many names the Donor popup lists
+
+// Donor cell: all the donors on one line, cut off with "…" when they don't fit.
+// Hovering opens a popup with every donor on its own line (only when there is
+// more to see — several donors, or one name that got cut off). The popup is
+// `fixed`, so the table's horizontal scroll can't clip it.
+function DonorsCell({ names }) {
+  const [tip, setTip] = useState(null);
+  if (!names || names.length === 0) return <span className="text-slate-300">—</span>;
+
+  const shown = names.slice(0, POPUP_DONORS);
+  const hidden = names.length - shown.length;
+
+  const show = (e) => {
+    const line = e.currentTarget.firstChild;
+    const cutOff = line && line.scrollWidth > line.clientWidth;
+    if (names.length < 2 && !cutOff) return; // nothing more to show
+    const rect = e.currentTarget.getBoundingClientRect();
+    const estHeight = 52 + shown.length * 26;
+    const fitsBelow = rect.bottom + estHeight + 12 < window.innerHeight;
+    setTip({
+      left: Math.min(Math.max(rect.left + rect.width / 2, 170), window.innerWidth - 170),
+      top: fitsBelow ? rect.bottom + 6 : undefined,
+      bottom: fitsBelow ? undefined : window.innerHeight - rect.top + 6,
+    });
+  };
+
+  return (
+    <span className="flex items-center max-w-[260px]" onMouseEnter={show} onMouseLeave={() => setTip(null)}>
+      <span className="truncate cursor-help text-slate-600">{names.join(", ")}</span>
+      {tip && (
+        <span
+          className="fixed z-50 w-80 bg-white rounded-xl border border-slate-200 shadow-lg p-3 text-left pointer-events-none block"
+          style={{ left: tip.left, top: tip.top, bottom: tip.bottom, transform: "translateX(-50%)" }}
+        >
+          <span className="block text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">
+            Donors · {names.length}
+          </span>
+          {shown.map((n, i) => (
+            <span key={n} className={`block text-xs text-slate-700 break-words py-1 ${i > 0 ? "border-t border-slate-100" : ""}`}>
+              {n}
+            </span>
+          ))}
+          {hidden > 0 && (
+            <span className="block text-[11px] text-slate-400 border-t border-slate-100 mt-1 pt-1.5">
+              and {hidden} more
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // Frozen columns: the number column and the Donor Name stay in place while
 // every other column scrolls sideways underneath them.
 const SNO_W = 64;
@@ -162,7 +260,7 @@ const DONOR_W = 240;
 
 const PAGE_SIZE = 10;
 
-const EMPTY_FILTERS = { donorType: null, kam: null, spoc: null, platform: null };
+const EMPTY_FILTERS = { donorType: null, kam: null, spoc: null, platform: null, category: null };
 
 // forwardRef so the parent page's "Clear all filters" bar can reach in
 // and reset this table's own search/column-filters/sort — those are
@@ -174,16 +272,18 @@ const EMPTY_FILTERS = { donorType: null, kam: null, spoc: null, platform: null }
 // title when the Remarks / Calls couldn't be loaded from Bigin.
 // `onSelectCalls(donor)` opens the popup with that donor's calls (each
 // donor row carries its `calls`, newest first).
-const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSelectDonor, onSelectCalls, onFiltersActiveChange, remarksNote, callsNote }, ref) {
+const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSelectDonor, onSelectCalls, onFiltersActiveChange, remarksNote, callsNote, scopeLabel }, ref) {
   const [search, setSearch] = useState("");
   // Multi-select per column — null means "everything" for that column.
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [sortColumn, setSortColumn] = useState(null); // "account" | "totalAmount" | null
   const [sortDir, setSortDir] = useState(null); // "asc" | "desc" | null
+  // Donor column: true = only donors whose Bigin "Donor" field is filled in.
+  const [donorOnly, setDonorOnly] = useState(false);
   const [page, setPage] = useState(0);
 
   const hasActiveFilters =
-    search.trim() !== "" || Object.values(filters).some((v) => v != null) || sortColumn != null;
+    search.trim() !== "" || Object.values(filters).some((v) => v != null) || sortColumn != null || donorOnly;
 
   useEffect(() => {
     onFiltersActiveChange?.(hasActiveFilters);
@@ -193,6 +293,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
     clearFilters: () => {
       setSearch("");
       setFilters(EMPTY_FILTERS);
+      setDonorOnly(false);
       setSortColumn(null);
       setSortDir(null);
       setPage(0);
@@ -206,7 +307,8 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
   const kamOptions = useMemo(() => optionsFor(donors, "kam"), [donors]);
   const spocOptions = useMemo(() => optionsFor(donors, "spoc"), [donors]);
   const platformOptions = useMemo(() => optionsFor(donors, "platform"), [donors]);
-  const optionsByField = { donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions, platform: platformOptions };
+  const categoryOptions = useMemo(() => optionsFor(donors, "category"), [donors]);
+  const optionsByField = { donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions, platform: platformOptions, category: categoryOptions };
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPage, optionsByField);
 
   const setSortFor = (column) => (dir) => {
@@ -225,7 +327,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
       // with that badge, and typing a word from a note finds the donors
       // whose Remarks mention it.
       out = out.filter((d) => {
-        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""} ${d.platform || ""} ${remarksSearchText(d)}`.toLowerCase();
+        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""} ${d.donor || ""} ${d.platform || ""} ${remarksSearchText(d)}`.toLowerCase();
         return hay.includes(q);
       });
     }
@@ -234,8 +336,11 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
         matchesFilter(d.donorType, filters.donorType) &&
         matchesFilter(d.kam, filters.kam) &&
         matchesFilter(d.spoc, filters.spoc) &&
-        matchesFilter(d.platform, filters.platform)
+        matchesFilter(d.platform, filters.platform) &&
+        matchesFilter(d.category, filters.category)
     );
+    // "Is not empty" on the Donor column: drop donors with no Donor value ("—").
+    if (donorOnly) out = out.filter((d) => d.donor && d.donor !== "—");
     if (sortColumn && sortDir) {
       out = [...out].sort((a, b) => {
         if (sortColumn === "totalAmount") {
@@ -246,7 +351,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
       });
     }
     return out;
-  }, [donors, search, filters, sortColumn, sortDir]);
+  }, [donors, search, filters, sortColumn, sortDir, donorOnly]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -272,8 +377,8 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
   const handleExport = () => {
     downloadCsv(
       "donor-history.csv",
-      ["S.No", "Donor Name", "Total Amount", "Donor Type", "Platform", "KAM", "SPOC", "Remarks", "Calls"],
-      filtered.map((d, i) => [i + 1, d.account, d.totalAmount, d.donorType, d.platform, d.kam, d.spoc, remarksForExport(d), (d.calls || []).length])
+      ["S.No", "Donor Name", "Total Amount", "Category", "Donor Type", "Platform", "KAM", "SPOC", "Donor", "Remarks", "Calls"],
+      filtered.map((d, i) => [i + 1, d.account, d.totalAmount, d.category || "", d.donorType, d.platform, d.kam, d.spoc, d.donor === "—" ? "" : d.donor, remarksForExport(d), (d.calls || []).length])
     );
   };
 
@@ -282,7 +387,9 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-5 pb-4">
         <div>
           <p className="font-display font-bold text-navy-900 text-lg">Donor History</p>
-          <p className="text-sm text-slate-400">List of donors and their contribution details</p>
+          <p className="text-sm text-slate-400">
+            List of donors and their contribution details{scopeLabel ? ` · ${scopeLabel}` : ""}
+          </p>
           {remarksNote && <p className="text-xs text-amber-600 mt-1">{remarksNote}</p>}
           {callsNote && <p className="text-xs text-amber-600 mt-1">{callsNote}</p>}
         </div>
@@ -293,7 +400,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
             <input
               value={search}
               onChange={(e) => updateSearch(e.target.value)}
-              placeholder="Search name, donor type, KAM, SPOC or remarks..."
+              placeholder="Search name, donor type, KAM, SPOC, donor or remarks..."
               className="pl-9 pr-3 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-pink-400/60 focus:border-pink-400 w-56"
             />
           </div>
@@ -301,7 +408,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[1060px]">
+        <table className="w-full text-sm min-w-[1380px]">
           <thead>
             <tr className="bg-navy-900 text-white text-left text-xs uppercase tracking-wide">
               <th
@@ -329,6 +436,18 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
                   sortDir={sortColumn === "totalAmount" ? sortDir : null}
                   onSort={setSortFor("totalAmount")}
                 />
+              </th>
+              <th className="px-5 py-3 font-semibold">
+                <span title="A: above ₹1 Cr · B: ₹50 L to ₹1 Cr · C: below ₹50 L — from the Total Amount shown">
+                  <HeaderFilterMenu
+                    label="Category"
+                    options={categoryOptions}
+                    selected={filters.category}
+                    onToggle={toggleOption("category")}
+                    onSelectAll={selectAll("category")}
+                    onClearAll={clearAll("category")}
+                  />
+                </span>
               </th>
               <th className="px-5 py-3 font-semibold">
                 <HeaderFilterMenu
@@ -370,6 +489,18 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
                   onClearAll={clearAll("spoc")}
                 />
               </th>
+              <th className="px-5 py-3 font-semibold">
+                <NotEmptyHeader
+                  label="Donor"
+                  active={donorOnly}
+                  onClick={() => {
+                    setDonorOnly((v) => !v);
+                    setPage(0);
+                  }}
+                  onTitle="Showing only donors with a Donor value — click to show everyone"
+                  offTitle="Show only donors with a Donor value (hide blanks)"
+                />
+              </th>
               <th className="px-5 py-3 font-semibold">Remarks</th>
               <th className="px-5 py-3 font-semibold text-center">Calls</th>
             </tr>
@@ -406,11 +537,17 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
                   {moneyForDonorType(d.totalAmount, d.donorType)}
                 </td>
                 <td className="px-5 py-3">
+                  <CategoryBadge value={d.category} />
+                </td>
+                <td className="px-5 py-3">
                   <DonorTypeBadge donorType={d.donorType} />
                 </td>
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.platform}</td>
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.kam}</td>
                 <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{d.spoc}</td>
+                <td className="px-5 py-3">
+                  <DonorsCell names={d.donorList || (d.donor && d.donor !== "—" ? [d.donor] : [])} />
+                </td>
                 <td className="px-5 py-3">
                   <RemarksCell notes={d.remarks} />
                 </td>
@@ -432,7 +569,7 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
             ))}
             {pageRows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-5 py-8 text-center text-slate-400 text-sm">
+                <td colSpan={11} className="px-5 py-8 text-center text-slate-400 text-sm">
                   No donors match your search.
                 </td>
               </tr>

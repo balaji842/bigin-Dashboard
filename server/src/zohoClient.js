@@ -329,50 +329,68 @@ async function fetchAllDonorPhones() {
   return result;
 }
 
-// The deals (Pipelines module), with the "Donation Type" field added.
+// The deals (Pipelines module), with two extra Bigin fields added:
 //
-// CER donations are the deals whose Donation Type is "CER" (a different field
-// from Category of Donation and from Type = Cash / Kind). The field's API name
-// isn't hard-coded: it's found by its label in the Fields metadata (needs
-// ZohoBigin.settings.fields.READ, optional). If that lookup is refused, or Bigin
-// rejects the field name (400), it retries with the usual name "Donation_Type"
-// and finally with the original field list, so a wrong guess can never stop the
-// dashboard loading — it just leaves Donation Type out (no CER data then).
+//   Donation Type  → `Donation_Type`  (CER donations are the deals whose Donation
+//                    Type is "CER" — a different field from Category of Donation
+//                    and from Type = Cash / Kind)
+//   Donor          → `Donor_Field`    (the pipeline's "Donor" field, shown in the
+//                    Overview's Donor History table next to SPOC)
 //
-// Each deal gets its Donation Type under the key `Donation_Type`, whatever the
-// field is really called in Bigin.
-let donationTypeFieldPromise = null;
+// The fields' API names aren't hard-coded: they are found by their LABEL in the
+// Fields metadata (needs ZohoBigin.settings.fields.READ, optional). If that lookup
+// is refused, "Donation_Type" and "Donor" are tried. If Bigin rejects the field
+// list (400) it retries with fewer extras — each one alone, then none — so a
+// wrong guess can never stop the dashboard loading; it just leaves that field
+// out. A field that turns out to be one the deal list already has (for example
+// when "Donor" is the label of the deal-name field) is read from that field and
+// not requested twice.
+//
+// Each deal gets the values under the fixed keys above, whatever the fields are
+// really called in Bigin.
+let pipelineExtrasPromise = null;
 const normFieldLabel = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-async function findDonationTypeField() {
+async function findPipelineExtraFields() {
   const data = await biginRequest("/settings/fields", { params: { module: "Pipelines" } });
-  const hit = (data?.fields || []).find((f) => normFieldLabel(f.field_label || f.display_label) === "donationtype");
-  return hit?.api_name || null;
+  const byLabel = (label) =>
+    (data?.fields || []).find((f) => normFieldLabel(f.field_label || f.display_label) === label)?.api_name || null;
+  return { ok: true, donationType: byLabel("donationtype"), donor: byLabel("donor") };
 }
 
 async function fetchAllPipelines() {
-  if (!donationTypeFieldPromise) {
-    donationTypeFieldPromise = findDonationTypeField().catch((err) => {
-      console.warn(`[zohoClient] Couldn't look up the Donation Type field (${err.message}); trying "Donation_Type".`);
-      return null;
+  if (!pipelineExtrasPromise) {
+    pipelineExtrasPromise = findPipelineExtraFields().catch((err) => {
+      console.warn(`[zohoClient] Couldn't look up the Donation Type / Donor fields (${err.message}); trying "Donation_Type" and "Donor".`);
+      return { ok: false };
     });
   }
-  const found = await donationTypeFieldPromise;
-  // the field found by its label, then the usual name, and only then no extra field at all
-  const attempts = [...new Set([found, "Donation_Type"].filter(Boolean)), null];
+  const found = await pipelineExtrasPromise;
+  // After a good lookup a field Bigin doesn't have is skipped; after a failed one, the usual names are guessed.
+  const guess = (api, fallback) => (found.ok ? api : api || fallback);
+  const wanted = [
+    ["Donation_Type", guess(found.donationType, "Donation_Type")],
+    ["Donor_Field", guess(found.donor, "Donor")],
+  ].filter(([, api]) => api);
+
+  // all extras, then each on its own, then none
+  const attempts = [wanted, ...(wanted.length > 1 ? wanted.map((w) => [w]) : []), []];
+  const base = new Set(DEFAULT_FIELDS.Pipelines.split(",").map((f) => f.trim()));
 
   let lastErr;
-  for (const name of attempts) {
-    const fields = name ? `${DEFAULT_FIELDS.Pipelines},${name}` : DEFAULT_FIELDS.Pipelines;
+  for (const extras of attempts) {
+    const requested = [...new Set(extras.map(([, api]) => api).filter((api) => !base.has(api)))];
+    const fields = [DEFAULT_FIELDS.Pipelines, ...requested].join(",");
     try {
       const records = await fetchAllRecords("Pipelines", { fields });
-      if (name && name !== "Donation_Type") for (const r of records) r.Donation_Type = r[name];
-      if (!name) console.warn("[zohoClient] Loaded deals WITHOUT the Donation Type field — the CER Dashboard will be empty.");
+      for (const [key, api] of extras) if (key !== api) for (const r of records) r[key] = r[api];
+      const missing = wanted.filter(([key]) => !extras.some(([k]) => k === key)).map(([key]) => key);
+      if (missing.length) console.warn(`[zohoClient] Loaded deals WITHOUT: ${missing.join(", ")} — those columns will be empty.`);
       return records;
     } catch (err) {
       if (err.status !== 400) throw err;
       lastErr = err;
-      console.warn(`[zohoClient] Bigin rejected the deal field list with "${name || "(no extra field)"}"; trying a simpler one.`);
+      console.warn(`[zohoClient] Bigin rejected the deal field list with extras [${extras.map(([, api]) => api).join(", ") || "none"}]; trying a simpler one.`);
     }
   }
   throw lastErr;

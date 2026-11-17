@@ -140,6 +140,16 @@ export function donationTypeOf(deal) {
   return String(v).trim();
 }
 
+// The deal's "Donor" field from Bigin (the pipeline field of that name, loaded as
+// `Donor_Field`) as plain text, "" when blank — a plain value, a { name } object or
+// a list are all handled.
+export function donorFieldOf(deal) {
+  const v = deal?.Donor_Field;
+  if (v == null) return "";
+  if (Array.isArray(v)) return v.map((x) => textOf(x)).filter(Boolean).join(", ");
+  return textOf(v);
+}
+
 // CER donations: the deals whose Donation Type is CER. (Their Category of
 // Donation is NSNOP, so they also stay in the NSNOP pages.)
 export function isCerDeal(deal) {
