@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { moneyCr, fullMoney, moneyForDonorType } from "../lib/format.js";
 import { IconBuilding, IconUsers } from "./icons.jsx";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import { facetOptions } from "../lib/facetOptions.js";
 import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
 
@@ -430,8 +431,15 @@ export default function DonorHistoryModal({ open, onClose, donor }) {
     // field — those all read straight off an existing property.
     const withMonth = donor.donors.map((d) => ({ ...d, monthLabel: monthNameOf(d.closingDate) }));
 
-    const byField = {};
-    for (const field of FILTER_FIELDS) byField[field] = optionsFor(withMonth, field);
+    // Each column's list holds only the values in the rows the table can show —
+    // the rows left by the OTHER columns' filters (see lib/facetOptions.js).
+    const byField = facetOptions({
+      rows: withMonth,
+      fieldOf: Object.fromEntries(FILTER_FIELDS.map((f) => [f, f])),
+      filters,
+      matches: matchesFilter,
+      optionsFor,
+    });
 
     const filtered = withMonth.filter((d) => FILTER_FIELDS.every((field) => matchesFilter(d[field], filters[field])));
 

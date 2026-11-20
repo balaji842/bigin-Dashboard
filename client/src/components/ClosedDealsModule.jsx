@@ -12,6 +12,7 @@ import { moneyCr, fullMoney, moneyForDonorType } from "../lib/format.js";
 import ExportButton from "./ExportButton.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import { facetOptions } from "../lib/facetOptions.js";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import DonorCallsModal from "./DonorCallsModal.jsx";
@@ -303,16 +304,23 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable(
     },
   }));
 
-  // Options are always computed from the full `rows` prop (not the
-  // filtered set), so a column's checkbox list never shrinks as other
-  // filters get applied. Month lives on `monthLabel`, everything else
-  // matches its own field name.
-  const monthOptions = useMemo(() => optionsFor(rows, "monthLabel"), [rows]);
-  const typeOptions = useMemo(() => optionsFor(rows, "type"), [rows]);
-  const donorTypeOptions = useMemo(() => optionsFor(rows, "donorType"), [rows]);
-  const kamOptions = useMemo(() => optionsFor(rows, "kam"), [rows]);
-  const spocOptions = useMemo(() => optionsFor(rows, "spoc"), [rows]);
-  const platformOptions = useMemo(() => optionsFor(rows, "platform"), [rows]);
+  // Each column's list holds only the values in the rows the table can show:
+  // the rows left by the search box and the OTHER columns' filters (see
+  // lib/facetOptions.js). Month lives on `monthLabel`, everything else matches
+  // its own field name.
+  const facets = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const keep = (r) => !q || `${r.account} ${r.kam} ${r.spoc} ${remarksSearchText(r.remarks)}`.toLowerCase().includes(q);
+    return facetOptions({
+      rows,
+      fieldOf: { month: "monthLabel", type: "type", donorType: "donorType", kam: "kam", spoc: "spoc", platform: "platform" },
+      filters,
+      matches: matchesFilter,
+      optionsFor,
+      keep,
+    });
+  }, [rows, filters, search]);
+  const { month: monthOptions, type: typeOptions, donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions, platform: platformOptions } = facets;
   const optionsByField = {
     month: monthOptions,
     type: typeOptions,

@@ -40,6 +40,7 @@ import { getPhones, invalidatePhonesCache } from "../lib/phonesCache.js";
 import { getStageHistories, invalidateStageHistoryCache } from "../lib/stageHistoryCache.js";
 import { debugStageHistory } from "../zohoClient.js";
 import { getCategoryTargets, setCategoryTarget } from "../lib/categoryTargetsStore.js";
+import { getMonthTargets, setMonthTarget, TARGET_TYPES } from "../lib/monthCashTargetsStore.js";
 import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
 
@@ -609,6 +610,116 @@ router.get("/crm-analysis/stage-history-debug", async (req, res) => {
   if (!/^\d+$/.test(dealId)) return res.status(400).json({ error: "Pass ?dealId=<the Bigin record id of a pipeline deal>." });
   try {
     res.json(await debugStageHistory(dealId));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// ── Monthwise Cash / Kind Target (the card between the Conversion cards and the By
+// Month table on the Comparison page) ──────────────────────────────────────────────
+const FY_MONTHS = ["April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"];
+
+// "Cash", "Kind" or "Cash,Kind" -> the chosen types in a fixed order (Cash first), or null
+// when something unknown is asked for.
+function parseTargetTypes(raw) {
+  const asked = (Array.isArray(raw) ? raw : String(raw ?? "Cash").split(","))
+    .map((t) => String(t).trim())
+    .filter(Boolean);
+  if (asked.length === 0 || asked.some((t) => !TARGET_TYPES.includes(t))) return null;
+  return TARGET_TYPES.filter((t) => asked.includes(t));
+}
+
+// One fiscal year, month by month, for the chosen type(s): what was converted next to the
+// targets set for the month. It follows the Bigin "Monthwise Cash / Kind Target" reports
+// exactly, so the numbers agree with them:
+//   - the deals: Fiscal year is the one asked for, Type is Cash / Kind, Sub-Pipeline is
+//     Closed Leads, Stage isn't On Hold or Lost (On Hold (SE), Lost Lead, Lost 2026-2027),
+//     Category of Donation is NSNOP (the dashboard's deals already are);
+//   - the month: each deal's EXPECTED CONVERSION MONTH — not its Closing Date. A deal closed
+//     on 30 October whose Expected Conversion Month is November counts in November, just as
+//     in the Bigin report. A deal with no Expected Conversion Month isn't in any month.
+// It ignores the page's own filters, because a target is for the whole programme.
+//   With both Cash and Kind chosen, `achieved` and `target` are the two added together
+//   and `donors` counts each donor once, even one who gave both. `byType` always has
+//   each chosen type's own figures. `status` says whether the month is behind us, is
+//   the current one, or hasn't started.
+async function monthTargetPayload(fy, types) {
+  const donors = await getPipelines();
+  const { closed } = datasetViews(donors);
+  const counts = (d) => {
+    const stage = pick(d, "Stage", "").toLowerCase();
+    return pick(d, "Sub_Pipeline", "") === "Closed Leads" && !stage.startsWith("lost") && !stage.includes("on hold");
+  };
+  const inFy = closed.filter((d) => pick(d, "Fiscal_year", "") === fy && counts(d));
+  const ofType = (t) => inFy.filter((d) => pick(d, "Type", "") === t);
+  const summaryOf = (list) => monthWiseFromPicklist(list, "Expected_Conversion_Month");
+  const perType = Object.fromEntries(types.map((t) => [t, { summary: summaryOf(ofType(t)), targets: getMonthTargets(fy, t) }]));
+  const combined = types.length > 1 ? summaryOf(inFy.filter((d) => types.includes(pick(d, "Type", "")))) : null;
+
+  const startYear = Number(String(fy).slice(0, 4));
+  const now = new Date();
+  const nowIndex = now.getFullYear() * 12 + now.getMonth();
+  const months = FY_MONTHS.map((name, i) => {
+    const calendarMonth = (3 + i) % 12; // April = 3
+    const year = startYear + (i >= 9 ? 1 : 0);
+    const at = year * 12 + calendarMonth;
+    const byType = {};
+    for (const t of types) {
+      const row = perType[t].summary.find((m) => m.name === name) || { amount: 0, donors: 0 };
+      const target = perType[t].targets[name];
+      byType[t] = { achieved: row.amount, donors: row.donors, target: target > 0 ? target : null };
+    }
+    const all = combined ? combined.find((m) => m.name === name) || { amount: 0, donors: 0 } : null;
+    const targetSum = types.reduce((sum, t) => sum + (byType[t].target || 0), 0);
+    return {
+      name,
+      achieved: all ? all.amount : byType[types[0]].achieved,
+      donors: all ? all.donors : byType[types[0]].donors,
+      target: targetSum > 0 ? targetSum : null,
+      byType,
+      status: at < nowIndex ? "past" : at === nowIndex ? "current" : "upcoming",
+    };
+  });
+  return { fy, types, months, generatedAt: new Date().toISOString() };
+}
+
+// GET /api/crm-analysis/month-cash-target?fy=2026-2027&types=Cash,Kind
+// `types` is Cash, Kind or Cash,Kind (default Cash); the older `type=` is accepted too.
+router.get("/crm-analysis/month-cash-target", async (req, res) => {
+  const fy = String(req.query.fy || "2026-2027");
+  const types = parseTargetTypes(req.query.types ?? req.query.type);
+  if (!/^\d{4}-\d{4}$/.test(fy)) return res.status(400).json({ error: "fy must look like 2026-2027" });
+  if (!types) return res.status(400).json({ error: `types must be Cash, Kind or Cash,Kind` });
+  try {
+    res.json(await monthTargetPayload(fy, types));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// PUT /api/crm-analysis/month-cash-target
+//   body: { fy: "2026-2027", month: "November", targets: { Cash: 80000000, Kind: 20000000 } }
+//   (or one type the older way: { fy, type: "Kind", month, target: 20000000 })
+// Amounts are in rupees, 0 clears that type's target for the month. All of them are checked
+// first and saved together. `types` (default: the ones in `targets`) says which view to answer
+// with — the refreshed card data.
+router.put("/crm-analysis/month-cash-target", async (req, res) => {
+  const { fy, month } = req.body || {};
+  const targets = req.body?.targets && typeof req.body.targets === "object" ? req.body.targets : { [req.body?.type ?? "Cash"]: req.body?.target };
+  if (!/^\d{4}-\d{4}$/.test(String(fy))) return res.status(400).json({ error: "fy must look like 2026-2027" });
+  if (!FY_MONTHS.includes(month)) return res.status(400).json({ error: `month must be one of ${FY_MONTHS.join(", ")}` });
+  const entries = Object.entries(targets);
+  if (entries.length === 0) return res.status(400).json({ error: "no targets given" });
+  for (const [type, target] of entries) {
+    if (!TARGET_TYPES.includes(type)) return res.status(400).json({ error: `type must be one of ${TARGET_TYPES.join(", ")}` });
+    const value = Number(target);
+    if (!Number.isFinite(value) || value < 0 || value > 1e12) return res.status(400).json({ error: "target must be an amount in rupees, 0 or more" });
+  }
+  const view = parseTargetTypes(req.body?.types ?? entries.map(([t]) => t));
+  if (!view) return res.status(400).json({ error: "types must be Cash, Kind or Cash,Kind" });
+  try {
+    for (const [type, target] of entries) setMonthTarget(String(fy), type, month, Math.round(Number(target)));
+    res.json(await monthTargetPayload(String(fy), view));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }

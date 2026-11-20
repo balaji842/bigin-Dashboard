@@ -52,6 +52,20 @@ const DONOR_W = 240;
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
 const TYPE_ORDER = ["Cash", "Kind", "School Engagement"];
 const ENGAGEMENT_OPTIONS = ["Engaged", "Not Engaged"];
+const ATTR_KEYS = ["platform", "spoc", "kam", "donorType"];
+
+// Does a donor row pass the search box and every filter except the one named
+// `skip`? (skip = null → every filter.) The table uses it to pick its rows; each
+// column's list uses it to find the values still possible for that column.
+function rowPasses(r, q, f, skip) {
+  if (q && !r.account.toLowerCase().includes(q)) return false;
+  if (skip !== "category" && f.category != null && !f.category.includes(r.category || "—")) return false;
+  if (skip !== "engagement" && f.engagement != null && !f.engagement.includes(r.status)) return false;
+  for (const key of ATTR_KEYS) {
+    if (skip !== key && f.attr[key] != null && !f.attr[key].includes(r[key])) return false;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------- icons
 function SearchIcon(props) {
@@ -508,20 +522,29 @@ export default function OverallComparisonModule() {
     return out;
   }, [data, shownYears, selectedTypes]);
 
-  const categoryOptions = useMemo(() => {
-    const present = new Set(view.map((r) => r.category || "—"));
-    return ["A", "B", "C", "—"].filter((c) => present.has(c));
-  }, [view]);
-
-  // The values each donor-level column filter offers: whatever the donors
-  // currently in `view` have.
-  const attrOptions = useMemo(() => {
-    const out = { platform: [], spoc: [], kam: [], donorType: [] };
-    for (const key of Object.keys(out)) {
-      out[key] = [...new Set(view.map((r) => r[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  // What each column filter offers: only the values among the donors the table
+  // can show — those in `view` left by the search box and the OTHER columns'
+  // filters. A column's own selection is left out of its own list, so more
+  // values can always be ticked back in.
+  const facets = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const f = { category: categoryFilter, engagement: engagementFilter, attr: attrFilters };
+    const pool = (skip) => view.filter((r) => rowPasses(r, q, f, skip));
+    const categories = new Set(pool("category").map((r) => r.category || "—"));
+    const statuses = new Set(pool("engagement").map((r) => r.status));
+    const attr = {};
+    for (const key of ATTR_KEYS) {
+      attr[key] = [...new Set(pool(key).map((r) => r[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     }
-    return out;
-  }, [view]);
+    return {
+      category: ["A", "B", "C", "—"].filter((c) => categories.has(c)),
+      engagement: ENGAGEMENT_OPTIONS.filter((e) => statuses.has(e)),
+      attr,
+    };
+  }, [view, search, categoryFilter, engagementFilter, attrFilters]);
+  const categoryOptions = facets.category;
+  const engagementOptions = facets.engagement;
+  const attrOptions = facets.attr;
 
   const toggleAttr = (key) => (value) =>
     setAttrFilters((prev) => {
@@ -542,7 +565,7 @@ export default function OverallComparisonModule() {
     onClearAll: () => setAttrFilters((prev) => ({ ...prev, [key]: [] })),
   });
 
-  const toggleEngagement = toggleIn(setEngagementFilter, ENGAGEMENT_OPTIONS);
+  const toggleEngagement = toggleIn(setEngagementFilter, engagementOptions);
 
   const toggleCategory = (value) =>
     setCategoryFilter((current) => {
@@ -562,15 +585,8 @@ export default function OverallComparisonModule() {
   // is how the server sends the donors.
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let out = view.filter((r) => {
-      if (q && !r.account.toLowerCase().includes(q)) return false;
-      if (categoryFilter != null && !categoryFilter.includes(r.category || "—")) return false;
-      if (engagementFilter != null && !engagementFilter.includes(r.status)) return false;
-      for (const key of ["platform", "spoc", "kam", "donorType"]) {
-        if (attrFilters[key] != null && !attrFilters[key].includes(r[key])) return false;
-      }
-      return true;
-    });
+    const f = { category: categoryFilter, engagement: engagementFilter, attr: attrFilters };
+    let out = view.filter((r) => rowPasses(r, q, f, null));
     if (sortColumn && sortDir) {
       const value = (r) => (sortColumn === "total" ? r.total : r.perYear[sortColumn.slice(3)]?.amount ?? null);
       out = [...out].sort((a, b) => {
@@ -915,7 +931,7 @@ export default function OverallComparisonModule() {
                 >
                   <ColumnFilterMenu
                     label="Engagement Status"
-                    options={ENGAGEMENT_OPTIONS}
+                    options={engagementOptions}
                     selected={engagementFilter}
                     onToggle={toggleEngagement}
                     onSelectAll={() => setEngagementFilter(null)}

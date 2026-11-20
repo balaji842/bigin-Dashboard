@@ -1,0 +1,18 @@
+{
+  "2026-2027": {
+    "Cash": {
+      "November": 80000000,
+      "December": 40000000,
+      "January": 10000000,
+      "February": 10000000,
+      "March": 60000000
+    },
+    "Kind": {
+      "November": 340000000,
+      "December": 270000000,
+      "January": 340000000,
+      "February": 320000000,
+      "March": 530000000
+    }
+  }
+}

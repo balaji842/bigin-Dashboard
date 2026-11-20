@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { moneyAutoScale, fullMoney } from "../lib/format.js";
 import { downloadCsv } from "../lib/csvExport.js";
 import HeaderFilterMenu, { matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import { facetOptions } from "../lib/facetOptions.js";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 
 // CER Dashboard — the donations received under CER.
@@ -348,22 +349,32 @@ export default function CERDashboardModule() {
   );
   const withMonth = useMemo(() => sorted.map((d) => ({ ...d, monthLabel: monthLabel(d) })), [sorted]);
 
-  // What each column filter offers: the values in the date range (so a list
-  // never shrinks as other filters are applied). Months newest first.
+  // What each column filter offers: only the values in the rows the table can
+  // show — the rows in the date range left by the search box and the OTHER
+  // columns' filters (see lib/facetOptions.js). Months newest first.
   const optionsByField = useMemo(() => {
-    const uniq = (get) => [...new Set(withMonth.map(get).filter(Boolean))];
+    const q = search.trim().toLowerCase();
     const alpha = (a, b) => a.localeCompare(b);
-    return {
-      type: uniq((d) => d.type).sort((a, b) => {
-        const ia = TYPE_ORDER.indexOf(a);
-        const ib = TYPE_ORDER.indexOf(b);
-        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || alpha(a, b);
-      }),
-      kam: uniq((d) => d.kam).sort(alpha),
-      spoc: uniq((d) => d.spoc).sort(alpha),
-      monthLabel: uniq((d) => d.monthLabel),
+    const listFor = (list, field) => {
+      const values = [...new Set(list.map((d) => d[field]).filter(Boolean))];
+      if (field === "type") {
+        return values.sort((a, b) => {
+          const ia = TYPE_ORDER.indexOf(a);
+          const ib = TYPE_ORDER.indexOf(b);
+          return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || alpha(a, b);
+        });
+      }
+      return field === "kam" || field === "spoc" ? values.sort(alpha) : values; // months stay newest first
     };
-  }, [withMonth]);
+    return facetOptions({
+      rows: withMonth,
+      fieldOf: Object.fromEntries(FILTER_FIELDS.map((f) => [f, f])),
+      filters: colFilters,
+      matches: matchesFilter,
+      optionsFor: listFor,
+      keep: (d) => !q || `${d.account} ${d.kam} ${d.spoc} ${d.type} ${d.monthLabel}`.toLowerCase().includes(q),
+    });
+  }, [withMonth, colFilters, search]);
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setColFilters, setPage, optionsByField);
 
   const rows = useMemo(() => {
@@ -459,6 +470,7 @@ export default function CERDashboardModule() {
                 <p className="font-display text-4xl font-bold text-blue-600" title={fullMoney(totalAmount)}>{moneyAutoScale(totalAmount)}</p>
                 <TrendBadge pct={amountPct} />
               </div>
+              <p className="text-sm text-slate-500">Total donations received ({activeTypes.join(" + ")})</p>
             </div>
           </div>
           <BarsArt className="absolute right-6 top-1/2 h-20 w-24 -translate-y-1/2 text-blue-300/70 hidden sm:block" />

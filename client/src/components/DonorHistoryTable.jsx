@@ -2,7 +2,8 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "r
 import { moneyForDonorType } from "../lib/format.js";
 import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
-import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import HeaderFilterMenu, { makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import { facetOptions } from "../lib/facetOptions.js";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 
 function IconSearch(props) {
@@ -199,6 +200,19 @@ function RemarksCell({ notes }) {
   );
 }
 
+// The Donor Type, KAM, SPOC and Platform cells hold ALL of a donor's values
+// joined with ", " ("P2, P3", "Mubithaa, Anoj"). Their filters list those cell
+// values exactly as the table shows them — a donor with "P2, P3" is its own entry,
+// next to "P2" and "P3" — and tick one to see the donors whose cell is exactly that.
+// "—" (no value) isn't offered.
+const cellOptions = (rows, field) =>
+  [...new Set(rows.map((r) => r[field]).filter((v) => v && v !== "—"))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+const cellMatches = (value, selected) => selected == null || selected.includes(value);
+
+// What the search box looks at for one donor row.
+const searchHay = (d) =>
+  `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""} ${d.donor || ""} ${d.platform || ""} ${remarksSearchText(d)}`.toLowerCase();
+
 const POPUP_DONORS = 15; // how many names the Donor popup lists
 
 // Donor cell: all the donors on one line, cut off with "…" when they don't fit.
@@ -300,14 +314,22 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
     },
   }));
 
-  // Options are always computed from the full `donors` prop (not the
-  // filtered set), so a column's checkbox list never shrinks as other
-  // filters get applied.
-  const donorTypeOptions = useMemo(() => optionsFor(donors, "donorType"), [donors]);
-  const kamOptions = useMemo(() => optionsFor(donors, "kam"), [donors]);
-  const spocOptions = useMemo(() => optionsFor(donors, "spoc"), [donors]);
-  const platformOptions = useMemo(() => optionsFor(donors, "platform"), [donors]);
-  const categoryOptions = useMemo(() => optionsFor(donors, "category"), [donors]);
+  // Each column's list holds only the values in the rows the table can show:
+  // the rows left by the search box, the Donor "not empty" switch and the OTHER
+  // columns' filters (see lib/facetOptions.js).
+  const facets = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const keep = (d) => (!q || searchHay(d).includes(q)) && (!donorOnly || (d.donor && d.donor !== "—"));
+    return facetOptions({
+      rows: donors,
+      fieldOf: { donorType: "donorType", kam: "kam", spoc: "spoc", platform: "platform", category: "category" },
+      filters,
+      matches: cellMatches,
+      optionsFor: cellOptions,
+      keep,
+    });
+  }, [donors, filters, search, donorOnly]);
+  const { donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions, platform: platformOptions, category: categoryOptions } = facets;
   const optionsByField = { donorType: donorTypeOptions, kam: kamOptions, spoc: spocOptions, platform: platformOptions, category: categoryOptions };
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPage, optionsByField);
 
@@ -326,18 +348,15 @@ const DonorHistoryTable = forwardRef(function DonorHistoryTable({ donors, onSele
       // name — so typing a Donor Type like "corporate" finds every donor
       // with that badge, and typing a word from a note finds the donors
       // whose Remarks mention it.
-      out = out.filter((d) => {
-        const hay = `${d.account} ${d.donorType || ""} ${d.kam || ""} ${d.spoc || ""} ${d.donor || ""} ${d.platform || ""} ${remarksSearchText(d)}`.toLowerCase();
-        return hay.includes(q);
-      });
+      out = out.filter((d) => searchHay(d).includes(q));
     }
     out = out.filter(
       (d) =>
-        matchesFilter(d.donorType, filters.donorType) &&
-        matchesFilter(d.kam, filters.kam) &&
-        matchesFilter(d.spoc, filters.spoc) &&
-        matchesFilter(d.platform, filters.platform) &&
-        matchesFilter(d.category, filters.category)
+        cellMatches(d.donorType, filters.donorType) &&
+        cellMatches(d.kam, filters.kam) &&
+        cellMatches(d.spoc, filters.spoc) &&
+        cellMatches(d.platform, filters.platform) &&
+        cellMatches(d.category, filters.category)
     );
     // "Is not empty" on the Donor column: drop donors with no Donor value ("—").
     if (donorOnly) out = out.filter((d) => d.donor && d.donor !== "—");

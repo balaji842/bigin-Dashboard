@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import MonthDonorBreakdownModal from "./MonthDonorBreakdownModal.jsx";
+import MonthCashTargetCard from "./MonthCashTargetCard.jsx";
 import DonorDrilldownModal from "./DonorDrilldownModal.jsx";
 import ClearFiltersBar from "./ClearFiltersBar.jsx";
 import MultiSelectDropdown from "./MultiSelectDropdown.jsx";
@@ -730,6 +731,9 @@ export default function FYComparisonModule() {
           />
         </div>
       </div>
+
+      {/* Month-wise cash targets (set by double-clicking a month) vs the cash achieved */}
+      <MonthCashTargetCard fy={data.fy2} />
 
       <MonthlyTable
         rows={data.byMonth}

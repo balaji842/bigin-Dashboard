@@ -3,6 +3,7 @@ import { moneyCr, moneyAutoScale } from "../lib/format.js";
 import { downloadCsv } from "../lib/csvExport.js";
 import ExportButton from "./ExportButton.jsx";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import { facetOptions } from "../lib/facetOptions.js";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import DonorCallsModal from "./DonorCallsModal.jsx";
 import { RemarksCell, CallsCell, remarksForExport } from "./DonorExtras.jsx";
@@ -155,12 +156,13 @@ function useBucketTable(rows, filterKeys, sortKeys) {
   const [sortDir, setSortDir] = useState(null);
   const [, setPageNoop] = useState(0); // this modal has no pagination; makeFilterHandlers just needs a setter to call
 
-  const optionsByField = useMemo(() => {
-    const out = {};
-    for (const k of filterKeys) out[k] = optionsFor(rows, k);
-    return out;
+  // Each column's list holds only the values in the rows the table can show —
+  // the rows left by the OTHER columns' filters (see lib/facetOptions.js).
+  const optionsByField = useMemo(
+    () => facetOptions({ rows, fieldOf: Object.fromEntries(filterKeys.map((k) => [k, k])), filters, matches: matchesFilter, optionsFor }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows]);
+    [rows, filters]
+  );
 
   const { toggleOption, selectAll, clearAll } = makeFilterHandlers(setFilters, setPageNoop, optionsByField);
 

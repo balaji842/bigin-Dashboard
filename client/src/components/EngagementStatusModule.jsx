@@ -508,30 +508,6 @@ export default function EngagementStatusModule() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Distinct option list per filterable column, computed once data is in.
-  const optionsFor = useMemo(() => {
-    const out = {};
-    for (const key of FILTERABLE_KEYS) out[key] = [];
-    if (!data) return out;
-    for (const key of FILTERABLE_KEYS) {
-      const set = new Set();
-      if (key === "fy1Month" || key === "fy2Month") {
-        // Every month any of the donors' deals fell in (not just each
-        // row's single "last deal" month), January -> December.
-        const dealsKey = key === "fy1Month" ? "fy1Deals" : "fy2Deals";
-        data.rows.forEach((r) => (r[dealsKey] || []).forEach((d) => d.month && set.add(d.month)));
-        out[key] = [...set].sort((a, b) => CALENDAR_MONTHS.indexOf(a) - CALENDAR_MONTHS.indexOf(b));
-        continue;
-      }
-      data.rows.forEach((r) => {
-        const v = COLUMN_DEFS[key](r);
-        if (v) set.add(v);
-      });
-      out[key] = [...set].sort();
-    }
-    return out;
-  }, [data]);
-
   // One set of numbers per DONOR, worked out from ALL of that donor's rows
   // (every Type, every month) — so no column filter can change them:
   //   - Difference / Percentage / Amount Difference compare the donor's
@@ -577,15 +553,31 @@ export default function EngagementStatusModule() {
     return totals;
   }, [data]);
 
+  // Every Type of Engagement that exists in each year's data (not just the ones the
+  // list offers right now). The two Type filters match exact combinations, so
+  // "everything" (filter off) means ALL of the year's Types ticked — ticking only the
+  // Types the list happens to show, while another filter has narrowed it, is a real
+  // combination, not "off".
+  const typesInData = useMemo(() => {
+    const out = { fy1Type: new Set(), fy2Type: new Set() };
+    for (const r of data?.rows || []) {
+      if (r.fy1Type) out.fy1Type.add(r.fy1Type);
+      if (r.fy2Type) out.fy2Type.add(r.fy2Type);
+    }
+    return out;
+  }, [data]);
+
   const toggleFilter = (key) => (value) => {
     setFilters((prev) => {
       const allOptions = optionsFor[key];
       const current = prev[key];
       const base = current == null ? allOptions : current;
       const next = base.includes(value) ? base.filter((v) => v !== value) : [...base, value];
+      // how many ticked boxes mean "filter off"
+      const offCount = typesInData[key] ? typesInData[key].size : allOptions.length;
       let resolved;
       if (next.length === 0) resolved = current; // never allow zero selected
-      else if (next.length === allOptions.length) resolved = null; // back to "everything"
+      else if (next.length === offCount) resolved = null; // back to "everything"
       else resolved = next;
       return { ...prev, [key]: resolved };
     });
@@ -603,22 +595,20 @@ export default function EngagementStatusModule() {
     }
   };
 
-  // FY1 / FY2 Type of Engagement filters each narrow ONLY their own
-  // side — the other year's columns keep showing whatever that donor
-  // really gave.
-  //
-  // Each donor is stored as one row per Type (e.g. a Cash row and a
-  // School Engagement row). Filtering FY1 = Cash used to drop every row
-  // whose FY1 type wasn't Cash, which also threw away the row holding
-  // that donor's FY2 School Engagement gift — so FY2 showed blank and
-  // you couldn't tell what they gave. Now:
-  //   1. A donor qualifies if they have a row matching each active filter
-  //      (FY1 filter -> some FY1 row matches; FY2 filter -> some FY2 row
-  //      matches; both -> both).
-  //   2. For qualifying donors, a row whose FY1 type doesn't match the
-  //      FY1 filter has just its FY1 half blanked (not the whole row),
-  //      so its FY2 half stays visible. Same for FY2 vs the FY2 filter.
-  //   3. A row with nothing left on either side is dropped.
+  // FY1 / FY2 Type of Engagement filters each look at ONLY their own side, and
+  // they match a donor's EXACT combination of Types in that year:
+  //   - nothing filtered (every Type ticked) -> every donor, whatever they gave;
+  //   - Cash only                -> donors who gave Cash and nothing else that year;
+  //   - Kind only / School Engagement only -> the same, for that Type;
+  //   - Cash + Kind              -> donors who gave BOTH Cash and Kind (and no School
+  //     Engagement) — not Cash-only donors, not Kind-only donors, not Cash + School
+  //     Engagement, not Kind + School Engagement;
+  //   and so on for any other pair or for all three.
+  // A donor who gave nothing that year has no combination, so a filter drops them.
+  // When both years are filtered a donor must match both. A qualifying donor keeps
+  // every row (the other year's columns show whatever they really gave); there's
+  // nothing to hide on the filtered side, because all of the donor's Types that
+  // year are already the ticked ones.
   //
   // The two Conversion Month filters go one step further: they work on
   // the individual deals. Un-ticking a month removes that month's deals
@@ -627,7 +617,12 @@ export default function EngagementStatusModule() {
   // Percentage / Amount Difference are recalculated from what's left.
   // A donor with nothing left in a month-filtered year drops out, the
   // same way the Type filters treat donors.
-  const filteredRows = useMemo(() => {
+  //
+  // computeRows builds the table's rows for ANY set of column filters (its
+  // parameter shadows `filters`). The table uses it with the real filters; each
+  // column's filter list uses it with that column's own filter removed, so a list
+  // shows exactly the values that column could still pick given everything else.
+  const computeRows = (filters, withSort = true) => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
     const fy1Filter = filters.fy1Type;
@@ -713,25 +708,25 @@ export default function EngagementStatusModule() {
     let baseRows = monthRows;
 
     if (fy1Filter != null || fy2Filter != null) {
-      const fy1Donors = new Set();
-      const fy2Donors = new Set();
+      // Each donor's Types in each year, worked out from all of that donor's rows.
+      const fy1Types = new Map();
+      const fy2Types = new Map();
+      const add = (map, account, type) => {
+        if (!map.has(account)) map.set(account, new Set());
+        map.get(account).add(type);
+      };
       for (const r of monthRows) {
-        if (fy1Filter != null && r.fy1Type && fy1Filter.includes(r.fy1Type)) fy1Donors.add(r.account);
-        if (fy2Filter != null && r.fy2Type && fy2Filter.includes(r.fy2Type)) fy2Donors.add(r.account);
+        if (r.fy1Type) add(fy1Types, r.account, r.fy1Type);
+        if (r.fy2Type) add(fy2Types, r.account, r.fy2Type);
       }
+      // exactly the ticked Types — no more, no fewer
+      const exactly = (types, ticked) => !!types && types.size === ticked.length && ticked.every((t) => types.has(t));
 
-      baseRows = [];
-      for (const r of monthRows) {
-        if (fy1Filter != null && !fy1Donors.has(r.account)) continue;
-        if (fy2Filter != null && !fy2Donors.has(r.account)) continue;
-
-        let row = r;
-        if (fy1Filter != null && row.fy1Type && !fy1Filter.includes(row.fy1Type)) row = blankFy1(row);
-        if (fy2Filter != null && row.fy2Type && !fy2Filter.includes(row.fy2Type)) row = blankFy2(row);
-
-        if (!row.fy1Type && !row.fy2Type) continue; // nothing left to show on this row
-        baseRows.push(row);
-      }
+      baseRows = monthRows.filter(
+        (r) =>
+          (fy1Filter == null || exactly(fy1Types.get(r.account), fy1Filter)) &&
+          (fy2Filter == null || exactly(fy2Types.get(r.account), fy2Filter))
+      );
     }
 
     let rows = baseRows.filter((r) => {
@@ -748,7 +743,7 @@ export default function EngagementStatusModule() {
       return true;
     });
 
-    if (sortColumn && sortDir) {
+    if (withSort && sortColumn && sortDir) {
       const getValue = COLUMN_DEFS[sortColumn];
       rows = [...rows].sort((a, b) => {
         const av = getValue(a);
@@ -767,7 +762,41 @@ export default function EngagementStatusModule() {
     }
 
     return rows;
-  }, [data, donorTotals, phonesById, search, filters, pipelineOnly, phoneOnly, sortColumn, sortDir]);
+  };
+  const filteredRows = useMemo(
+    () => computeRows(filters),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, donorTotals, phonesById, search, filters, pipelineOnly, phoneOnly, sortColumn, sortDir]
+  );
+
+  // The values each filterable column offers: only those in the rows the table
+  // could show with every OTHER filter, the search box and the switches applied.
+  // A column's own selection is left out of its own list, so more values can always
+  // be ticked back in.
+  const optionsFor = useMemo(() => {
+    const out = {};
+    for (const key of FILTERABLE_KEYS) out[key] = [];
+    if (!data) return out;
+    for (const key of FILTERABLE_KEYS) {
+      const pool = computeRows({ ...filters, [key]: null }, false);
+      const set = new Set();
+      if (key === "fy1Month" || key === "fy2Month") {
+        // Every month any of the donors' deals fell in (not just each
+        // row's single "last deal" month), January -> December.
+        const dealsKey = key === "fy1Month" ? "fy1Deals" : "fy2Deals";
+        pool.forEach((r) => (r[dealsKey] || []).forEach((d) => d.month && set.add(d.month)));
+        out[key] = [...set].sort((a, b) => CALENDAR_MONTHS.indexOf(a) - CALENDAR_MONTHS.indexOf(b));
+        continue;
+      }
+      pool.forEach((r) => {
+        const v = COLUMN_DEFS[key](r);
+        if (v) set.add(v);
+      });
+      out[key] = [...set].sort();
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, donorTotals, phonesById, search, filters, pipelineOnly, phoneOnly]);
 
   // Unique-donor counts AND amount totals for the summary cards — now
   // computed from the FILTERED rows (search + every column filter), so

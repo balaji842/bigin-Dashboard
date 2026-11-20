@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { moneyCr, fullMoney } from "../lib/format.js";
 import HeaderFilterMenu, { optionsFor, matchesFilter, makeFilterHandlers } from "./HeaderFilterMenu.jsx";
+import { facetOptions } from "../lib/facetOptions.js";
 import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import ExportButton from "./ExportButton.jsx";
 import { downloadCsv } from "../lib/csvExport.js";
@@ -77,6 +78,8 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
   const hasCreated = useMemo(() => donors.some((d) => d.createdTime), [donors]);
   // Pipeline lists (they carry the deal's stage): a Stages column, the stage each deal is in now.
   const hasStages = useMemo(() => hasCreated && donors.some((d) => d.stage), [donors, hasCreated]);
+  // With a Stages column, SPOC sits right after it (Stages, SPOC, Platform, KAM); other popups keep Platform, KAM, SPOC.
+  const spocFirst = hasStages;
   const hasDealIds = useMemo(() => donors.some((d) => d.dealId), [donors]);
   const dealIds = useMemo(() => (hasDealIds ? donors.map((d) => d.dealId).filter(Boolean) : []), [donors, hasDealIds]);
   const stage = useStageHistory(dealIds, open && hasCreated && hasDealIds);
@@ -98,13 +101,34 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
     }
   }, [open, title]);
 
-  const platformOptions = useMemo(() => optionsFor(rows, "platform"), [rows]);
-  const kamOptions = useMemo(() => optionsFor(rows, "kam"), [rows]);
-  const spocOptions = useMemo(() => optionsFor(rows, "spoc"), [rows]);
-  const typeOptions = useMemo(() => optionsFor(rows, "type"), [rows]);
-  const donorTypeOptions = useMemo(() => optionsFor(rows, "donorType"), [rows]);
-  const categoryOptions = useMemo(() => (hasCategory ? optionsFor(rows, "category") : []), [rows, hasCategory]);
-  const stageOptions = useMemo(() => (hasStages ? optionsFor(rows, "stage") : []), [rows, hasStages]);
+  // Each column's list holds only the values in the rows the popup can show —
+  // the rows left by the OTHER columns' filters (see lib/facetOptions.js).
+  const facets = useMemo(
+    () =>
+      facetOptions({
+        rows,
+        fieldOf: {
+          platform: "platform",
+          kam: "kam",
+          spoc: "spoc",
+          type: "type",
+          donorType: "donorType",
+          ...(hasCategory ? { category: "category" } : {}),
+          ...(hasStages ? { stageName: "stage" } : {}),
+        },
+        filters,
+        matches: matchesFilter,
+        optionsFor,
+      }),
+    [rows, filters, hasCategory, hasStages]
+  );
+  const platformOptions = facets.platform;
+  const kamOptions = facets.kam;
+  const spocOptions = facets.spoc;
+  const typeOptions = facets.type;
+  const donorTypeOptions = facets.donorType;
+  const categoryOptions = facets.category || [];
+  const stageOptions = facets.stageName || [];
   const optionsByField = {
     platform: platformOptions,
     kam: kamOptions,
@@ -162,14 +186,12 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
     downloadCsv(
       `${heading.replace(/[^\w\- ]+/g, "").trim() || "donor-list"}.csv`,
       [
-        "#",
+        "S.No",
         "Donor",
         "Amount",
         ...(hasCreated ? ["Created", "Days since created"] : []),
         ...(hasStages ? ["Stages"] : []),
-        "Platform",
-        "KAM",
-        "SPOC",
+        ...(spocFirst ? ["SPOC", "Platform", "KAM"] : ["Platform", "KAM", "SPOC"]),
         "Donation Type",
         "Donor Type",
         ...(hasCategory ? ["Category"] : []),
@@ -182,9 +204,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         d.amount,
         ...(hasCreated ? [d.createdTime ? fmtDate(d.createdTime) : "", d.createdTime ? daysBetween(d.createdTime) : ""] : []),
         ...(hasStages ? [d.stage || ""] : []),
-        d.platform,
-        d.kam,
-        d.spoc,
+        ...(spocFirst ? [d.spoc, d.platform, d.kam] : [d.platform, d.kam, d.spoc]),
         d.type,
         d.donorType,
         ...(hasCategory ? [d.category === "—" ? "" : d.category] : []),
@@ -225,7 +245,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                   style={{ position: "sticky", left: 0, width: NUM_W, minWidth: NUM_W, maxWidth: NUM_W }}
                   className="px-4 py-2 font-semibold bg-white z-20"
                 >
-                  #
+                  S.No
                 </th>
                 <th
                   style={{
@@ -276,6 +296,44 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                     />
                   </th>
                 )}
+                {spocFirst ? (
+                  <>
+                <th className="px-4 py-2 font-semibold">
+                  <HeaderFilterMenu
+                    variant="light"
+                    label="SPOC"
+                    options={spocOptions}
+                    selected={filters.spoc}
+                    onToggle={toggleOption("spoc")}
+                    onSelectAll={selectAll("spoc")}
+                    onClearAll={clearAll("spoc")}
+                  />
+                </th>
+                <th className="px-4 py-2 font-semibold">
+                  <HeaderFilterMenu
+                    variant="light"
+                    label="Platform"
+                    options={platformOptions}
+                    selected={filters.platform}
+                    onToggle={toggleOption("platform")}
+                    onSelectAll={selectAll("platform")}
+                    onClearAll={clearAll("platform")}
+                  />
+                </th>
+                <th className="px-4 py-2 font-semibold">
+                  <HeaderFilterMenu
+                    variant="light"
+                    label="KAM"
+                    options={kamOptions}
+                    selected={filters.kam}
+                    onToggle={toggleOption("kam")}
+                    onSelectAll={selectAll("kam")}
+                    onClearAll={clearAll("kam")}
+                  />
+                </th>
+                  </>
+                ) : (
+                  <>
                 <th className="px-4 py-2 font-semibold">
                   <HeaderFilterMenu
                     variant="light"
@@ -309,6 +367,8 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                     onClearAll={clearAll("spoc")}
                   />
                 </th>
+                  </>
+                )}
                 <th className="px-4 py-2 font-semibold">
                   <HeaderFilterMenu
                     variant="light"
@@ -377,9 +437,24 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                     </td>
                   )}
                   {hasStages && <td className="px-4 py-2 whitespace-nowrap">{d.stage || "—"}</td>}
-                  <td className="px-4 py-2 whitespace-nowrap">{d.platform}</td>
-                  <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>
-                  <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>
+                  {(() => {
+                    const platformTd = <td className="px-4 py-2 whitespace-nowrap">{d.platform}</td>;
+                    const kamTd = <td className="px-4 py-2 whitespace-nowrap">{d.kam}</td>;
+                    const spocTd = <td className="px-4 py-2 whitespace-nowrap">{d.spoc || "—"}</td>;
+                    return spocFirst ? (
+                      <>
+                        {spocTd}
+                        {platformTd}
+                        {kamTd}
+                      </>
+                    ) : (
+                      <>
+                        {platformTd}
+                        {kamTd}
+                        {spocTd}
+                      </>
+                    );
+                  })()}
                   <td className="px-4 py-2 whitespace-nowrap">{d.type || "—"}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{d.donorType || "—"}</td>
                   {hasCategory && (
