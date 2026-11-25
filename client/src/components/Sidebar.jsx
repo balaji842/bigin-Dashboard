@@ -1,36 +1,49 @@
-import { IconChartBars, IconDot, IconX, IconRefresh, IconTarget, IconWallet, IconTrendingUp, IconCalendar, IconCheckCircle } from "./icons.jsx";
+import { IconChartBars, IconDot, IconX, IconTarget, IconWallet, IconTrendingUp, IconCalendar, IconCheckCircle } from "./icons.jsx";
+
 const NAV_ITEMS = [
-  //{ id: "bigin-overview", label: "Bigin Overview", ready: true },
   { id: "crm-overview", label: "Overview", ready: true, icon: IconTarget },
   { id: "closed-donors", label: "Conversion", ready: true, icon: IconWallet },
   { id: "standard-pipeline", label: "Pipeline", ready: true, icon: IconTrendingUp },
   { id: "fy-comparison", label: "Comparison 2025-26 & 2026-27", ready: true, icon: IconCalendar },
-    { id: "engagement-status", label: "Engagement Status 2025-26 & 2026-27", ready: true, icon: IconCheckCircle },
+  { id: "engagement-status", label: "Engagement Status 2025-26 & 2026-27", ready: true, icon: IconCheckCircle },
   { id: "overall-comparison", label: "Overall Comparison", ready: true, icon: IconChartBars },
   { id: "cer-dashboard", label: "CER Dashboard", ready: true, icon: IconDonation },
-     { id: "other-dashboards", label: "Other Dashboards", ready: true, icon: IconGrid },
-
+  { id: "other-dashboards", label: "Other Dashboards", ready: true, icon: IconGrid },
+  { id: "daily-updates", label: "Daily Updates", ready: true, icon: IconNews },
 ];
-   function IconGrid(props) {
-     return (
-       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={props.className}>
-         <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
-         <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
-         <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
-         <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
-       </svg>
-     );
-   }
-   // an icon for the CER Dashboard (a hand holding a heart)
-   function IconDonation(props) {
-     return (
-       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
-         <path d="M12 12.5s-3.8-2.3-3.8-4.9A2.1 2.1 0 0112 6.5a2.1 2.1 0 013.8 1.1c0 2.6-3.8 4.9-3.8 4.9z" />
-         <path d="M3 17h3.2l2.6 1.8h5.4l5.3-2.6a1.3 1.3 0 00-1.2-2.3L15 15" />
-       </svg>
-     );
-   }
-export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose, activePage, onNavigate }) {
+
+function IconGrid(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={props.className}>
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+    </svg>
+  );
+}
+
+// an icon for the CER Dashboard (a hand holding a heart)
+function IconDonation(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+      <path d="M12 12.5s-3.8-2.3-3.8-4.9A2.1 2.1 0 0112 6.5a2.1 2.1 0 013.8 1.1c0 2.6-3.8 4.9-3.8 4.9z" />
+      <path d="M3 17h3.2l2.6 1.8h5.4l5.3-2.6a1.3 1.3 0 00-1.2-2.3L15 15" />
+    </svg>
+  );
+}
+
+// an icon for the Daily Updates page (a news page)
+function IconNews(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M8 9h8M8 13h8M8 17h5" />
+    </svg>
+  );
+}
+
+export default function Sidebar({ open, onClose, activePage, onNavigate }) {
   return (
     <>
       {open && (
@@ -99,22 +112,7 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
           })}
         </nav>
 
-        <div className="flex-1 px-6 py-2">
-          <p className="text-sm text-white/50 leading-relaxed">
-          </p>
-        </div>
-
-        {/* <div className="px-4 py-5 border-t border-white/10 text-xs text-white/40">
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="w-full mb-2 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-400 hover:to-purple-400 disabled:opacity-50 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm shadow-black/20"
-          >
-            <IconRefresh className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            {loading ? "Refreshing…" : "Refresh live data"}
-          </button>
-          {lastUpdated && <p>Last pulled: {lastUpdated}</p>}
-        </div> */}
+        <div className="flex-1" />
       </aside>
     </>
   );

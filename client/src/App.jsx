@@ -12,6 +12,7 @@ import CERDashboardModule from "./components/CERDashboardModule.jsx";
 import OtherDashboardsModule from "./components/OtherDashboardsModule.jsx";
 import LoginGate, { isUnlocked } from "./components/LoginGate.jsx";
 import AIChatbot from "./components/AIChatbot.jsx";
+import DailyUpdatesModule from "./components/DailyUpdatesModule.jsx";
 
 const PAGE_TITLES = {
   "closed-donors": {
@@ -41,6 +42,9 @@ const PAGE_TITLES = {
   "cer-dashboard": {
     title: "CER Dashboard",
     // sub: "Track and manage Corporate and Individual donations for education and community development.",
+  },
+   "daily-updates": {
+    title: "Daily Updates",
   },
      "other-dashboards": {
      title: "Other Dashboards",
@@ -119,6 +123,7 @@ export default function App() {
           {activePage === "closed-donors" && <ClosedDealsModule />}
           {activePage === "cer-dashboard" && <CERDashboardModule />}
           {activePage === "other-dashboards" && <OtherDashboardsModule />}
+          {activePage === "daily-updates" && <DailyUpdatesModule />}
         </main>
 
         <footer className="border-t border-slate-200 px-4 sm:px-6 md:px-8 py-3 max-w-6xl mx-auto w-full flex flex-col sm:flex-row gap-1 sm:gap-0 items-start sm:items-center justify-between text-xs text-slate-400">

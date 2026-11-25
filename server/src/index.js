@@ -4,13 +4,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import "dotenv/config";
 import exportRoutes from "./routes/export.js";
-
+ 
 import modulesRouter from "./routes/modules.js";
 import analyticsRouter from "./routes/analytics.js";
 import crmAnalysisRouter from "./routes/crmAnalysis.js";
 import authRouter from "./routes/auth.js";
 import aiRouter from "./routes/ai.js";
 import ollama from "ollama";
+import dailyUpdatesRouter from "./routes/dailyUpdates.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -21,7 +22,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
-
+app.use("/api", dailyUpdatesRouter);
 app.use("/api", authRouter);
 app.use("/api", modulesRouter);
 app.use("/api", analyticsRouter);
