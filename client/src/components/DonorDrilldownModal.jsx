@@ -6,6 +6,7 @@ import ColumnSortMenu from "./ColumnSortMenu.jsx";
 import ExportButton from "./ExportButton.jsx";
 import { downloadCsv } from "../lib/csvExport.js";
 import DonorCallsModal from "./DonorCallsModal.jsx";
+import MailComposeModal from "./MailComposeModal.jsx";
 import { RemarksCell, CallsCell, remarksForExport } from "./DonorExtras.jsx";
 import { useDonorExtras } from "../lib/useDonorExtras.js";
 import { useStageHistory } from "../lib/useStageHistory.js";
@@ -18,6 +19,7 @@ const DEFAULT_FILTERS = { platform: null, kam: null, spoc: null, type: null, don
 // Frozen columns: the "#" column and the Donor name stay in place while
 // every other column scrolls sideways underneath them.
 const NUM_W = 48;
+const CK_W = 48; // the tick-box column (Pipeline popups only)
 const DONOR_W = 220;
 
 // A / B / C donor category — calculated from the donor's FY 2025-2026
@@ -59,6 +61,26 @@ function CategoryBadge({ value }) {
 // Each row also shows the donor's Bigin Remarks (Notes) and Calls (loaded
 // when the popup opens, matched by the row's `accountId`); clicking a call
 // count opens the Calls popup (`onSelectCalls`).
+// Tick box in the blue of the design; `indeterminate` shows a dash (some, not all, ticked).
+function TickBox({ checked, indeterminate, onChange, label }) {
+  const on = checked || indeterminate;
+  return (
+    <label className="inline-grid cursor-pointer place-items-center align-middle">
+      <input type="checkbox" className="peer sr-only" checked={checked} ref={(el) => el && (el.indeterminate = !!indeterminate)} onChange={(e) => onChange(e.target.checked)} aria-label={label} />
+      <span className={`grid h-5 w-5 place-items-center rounded-[5px] border-2 transition-colors peer-focus-visible:outline peer-focus-visible:outline-[3px] peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#9db8f5] ${on ? "border-[#0b57d0] bg-[#0b57d0]" : "border-[#b6c0d3] bg-white"}`}>
+        {checked && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 12.5l4.5 4.5L19 7.5" />
+          </svg>
+        )}
+        {!checked && indeterminate && <span className="block h-0.5 w-2.5 rounded bg-white" />}
+      </span>
+    </label>
+  );
+}
+
+const SPOC_BLANK = (v) => !v || v === "Unspecified" || v === "—" || v === "-None-";
+
 function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, onSelectCalls }) {
   const { remarksById, callsById } = useDonorExtras(open);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
@@ -67,6 +89,21 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
   // dummy setter — this modal has no pagination, but makeFilterHandlers
   // expects one to call after every toggle/select-all/clear-all.
   const [, setPageNoop] = useState(0);
+  // "Send mail": tick donors (by deal id), then mail their SPOCs
+  const [selected, setSelected] = useState(() => new Set());
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [toast, setToast] = useState(null);
+  useEffect(() => {
+    if (!open) {
+      setSelected(new Set());
+      setComposeOpen(false);
+    }
+  }, [open]);
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(null), 4200);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const heading = title || `${monthName} ${fy}`;
 
@@ -80,6 +117,9 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
   const hasStages = useMemo(() => hasCreated && donors.some((d) => d.stage), [donors, hasCreated]);
   // With a Stages column, SPOC sits right after it (Stages, SPOC, Platform, KAM); other popups keep Platform, KAM, SPOC.
   const spocFirst = hasStages;
+  // tick boxes only where the rows are pipeline deals we can look up on the server
+  const selectable = hasStages && donors.some((d) => d.dealId);
+  const ckW = selectable ? CK_W : 0;
   const hasDealIds = useMemo(() => donors.some((d) => d.dealId), [donors]);
   const dealIds = useMemo(() => (hasDealIds ? donors.map((d) => d.dealId).filter(Boolean) : []), [donors, hasDealIds]);
   const stage = useStageHistory(dealIds, open && hasCreated && hasDealIds);
@@ -214,9 +254,44 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
     );
   };
 
+  // only ticked donors that are in view count (a filter can hide ticked rows)
+  const tickable = filtered.filter((d) => d.dealId);
+  const selectedRows = tickable.filter((d) => selected.has(d.dealId));
+  const allTicked = tickable.length > 0 && selectedRows.length === tickable.length;
+  const someTicked = selectedRows.length > 0 && !allTicked;
+  const toggleAll = (on) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const d of tickable) on ? next.add(d.dealId) : next.delete(d.dealId);
+      return next;
+    });
+  const toggleOne = (id, on) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      on ? next.add(id) : next.delete(id);
+      return next;
+    });
+  // one mail per SPOC, with only that SPOC's ticked donors
+  const mailGroups = (() => {
+    const bySpoc = new Map();
+    let noSpoc = 0;
+    for (const d of selectedRows) {
+      if (SPOC_BLANK(d.spoc)) {
+        noSpoc += 1;
+        continue;
+      }
+      if (!bySpoc.has(d.spoc)) bySpoc.set(d.spoc, { spoc: d.spoc, dealIds: [], donors: [] });
+      const g = bySpoc.get(d.spoc);
+      g.dealIds.push(d.dealId);
+      g.donors.push(d);
+    }
+    return { recipients: [...bySpoc.values()], noSpoc };
+  })();
+
   if (!open) return null;
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
@@ -230,6 +305,21 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
             {heading} — {moneyCr(totalAmount)} · {filtered.length} donor{filtered.length !== 1 ? "s" : ""}
           </p>
           <div className="flex items-center gap-3 shrink-0">
+            {selectable && selectedRows.length > 0 && (
+              <button
+                type="button"
+                data-send-mail
+                onClick={() => setComposeOpen(true)}
+                className="inline-flex items-center gap-2 rounded-lg border border-white bg-white px-3 py-1.5 text-sm font-semibold text-navy-900 hover:bg-[#e8eefc]"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="m3 7 9 6 9-6" />
+                </svg>
+                Send mail
+                <span className="rounded-full bg-navy-900/10 px-1.5 text-xs">{selectedRows.length}</span>
+              </button>
+            )}
             <ExportButton variant="dark" onClick={handleExport} disabled={filtered.length === 0} />
             <button onClick={onClose} className="text-white/70 hover:text-white text-lg leading-none">
               ×
@@ -238,11 +328,16 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         </div>
         <div className="overflow-y-auto flex-1">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" style={{ minWidth: 1220 + (hasCategory ? 80 : 0) + (hasCreated ? 150 : 0) + (hasStages ? 210 : 0) }}>
+            <table className="w-full text-sm" style={{ minWidth: 1220 + (hasCategory ? 80 : 0) + (hasCreated ? 150 : 0) + (hasStages ? 210 : 0) + ckW }}>
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100 sticky top-0 bg-white">
+                {selectable && (
+                  <th style={{ position: "sticky", left: 0, width: CK_W, minWidth: CK_W, maxWidth: CK_W }} className="px-4 py-2 bg-white z-20">
+                    <TickBox checked={allTicked} indeterminate={someTicked} onChange={toggleAll} label="Select all donors" />
+                  </th>
+                )}
                 <th
-                  style={{ position: "sticky", left: 0, width: NUM_W, minWidth: NUM_W, maxWidth: NUM_W }}
+                  style={{ position: "sticky", left: ckW, width: NUM_W, minWidth: NUM_W, maxWidth: NUM_W }}
                   className="px-4 py-2 font-semibold bg-white z-20"
                 >
                   S.No
@@ -250,7 +345,7 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                 <th
                   style={{
                     position: "sticky",
-                    left: NUM_W,
+                    left: ckW + NUM_W,
                     width: DONOR_W,
                     minWidth: DONOR_W,
                     maxWidth: DONOR_W,
@@ -409,24 +504,32 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
               </tr>
             </thead>
             <tbody>
-              {filtered.map((d, i) => (
-                <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : ""}>
+              {filtered.map((d, i) => {
+                const ticked = !!d.dealId && selected.has(d.dealId);
+                const rowBg = ticked ? "bg-[#e8efff]" : i % 2 === 1 ? "bg-slate-50" : "bg-white";
+                return (
+                <tr key={i} data-ticked={ticked ? "true" : undefined} className={ticked ? "bg-[#e8efff]" : i % 2 === 1 ? "bg-slate-50" : ""}>
+                  {selectable && (
+                    <td style={{ position: "sticky", left: 0, width: CK_W, minWidth: CK_W, maxWidth: CK_W }} className={`px-4 py-2 z-10 ${rowBg}`}>
+                      {d.dealId && <TickBox checked={ticked} onChange={(on) => toggleOne(d.dealId, on)} label={`Select ${d.account}`} />}
+                    </td>
+                  )}
                   <td
-                    style={{ position: "sticky", left: 0, width: NUM_W, minWidth: NUM_W, maxWidth: NUM_W }}
-                    className={`px-4 py-2 text-slate-400 z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}
+                    style={{ position: "sticky", left: ckW, width: NUM_W, minWidth: NUM_W, maxWidth: NUM_W }}
+                    className={`px-4 py-2 text-slate-400 z-10 ${rowBg}`}
                   >
                     {i + 1}
                   </td>
                   <td
                     style={{
                       position: "sticky",
-                      left: NUM_W,
+                      left: ckW + NUM_W,
                       width: DONOR_W,
                       minWidth: DONOR_W,
                       maxWidth: DONOR_W,
                       boxShadow: "inset -1px 0 0 #e2e8f0",
                     }}
-                    className={`px-4 py-2 font-medium text-navy-900 break-words z-10 ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}
+                    className={`px-4 py-2 font-medium text-navy-900 break-words z-10 ${rowBg}`}
                   >
                     {d.account}
                   </td>
@@ -472,10 +575,11 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
                     />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10 + (hasCategory ? 1 : 0) + (hasCreated ? 1 : 0) + (hasStages ? 1 : 0)} className="px-4 py-6 text-center text-slate-400 text-xs">
+                  <td colSpan={10 + (hasCategory ? 1 : 0) + (hasCreated ? 1 : 0) + (hasStages ? 1 : 0) + (selectable ? 1 : 0)} className="px-4 py-6 text-center text-slate-400 text-xs">
                     No donors found for this selection.
                   </td>
                 </tr>
@@ -486,6 +590,24 @@ function DonorDrilldownModalView({ open, onClose, monthName, fy, title, donors, 
         </div>
       </div>
     </div>
+    {selectable && (
+      <MailComposeModal
+        open={composeOpen}
+        onClose={() => setComposeOpen(false)}
+        recipients={mailGroups.recipients}
+        skipped={mailGroups.noSpoc}
+        onSent={({ sent }) => {
+          setSelected(new Set());
+          setToast(`Mail sent to ${sent} SPOC${sent === 1 ? "" : "s"}`);
+        }}
+      />
+    )}
+    {toast && (
+      <div role="status" className="fixed bottom-7 left-1/2 z-[80] -translate-x-1/2 rounded-lg bg-[#202124] px-5 py-3 text-sm text-white shadow-lg">
+        {toast}
+      </div>
+    )}
+    </>
   );
 }
 

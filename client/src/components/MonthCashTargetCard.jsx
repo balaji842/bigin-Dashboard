@@ -7,7 +7,8 @@ import { moneyCr } from "../lib/format.js";
 // cards and the By Month table.
 //
 //   - The Cash and Kind boxes in the top-right corner are ticked independently (at
-//     least one stays ticked): Cash alone, Kind alone, or both together. With both
+//     least one stays ticked): Cash alone, Kind alone, or both together. The card opens
+//     with BOTH ticked, every time the page is opened or refreshed. With both
 //     ticked the targets and the achieved amounts are added up, and each bar is split
 //     into its Cash part (pink) and its Kind part (indigo).
 //   - Achieved (the coloured bar): what was converted that month — Closed Leads deals of
@@ -17,8 +18,8 @@ import { moneyCr } from "../lib/format.js";
 //   - Target (navy marker + label): set by YOU — double-click a month (or press Enter on
 //     it). With one type ticked you type its target in crores; with both ticked there is
 //     a box for each, and the marker shows their sum. Saved on the server.
-//   - Each row shows the % achieved and the balance still to achieve. Hover a month for
-//     the details (with the Cash / Kind breakdown when both are ticked).
+//   - Hover a month for the details: target, achieved, the balance still to achieve and
+//     the % achieved (with the Cash / Kind breakdown when both are ticked).
 //
 // By default only the current month and the ones still to come are listed (that's
 // what a target is for); "Show all months" brings back the earlier ones.
@@ -32,8 +33,7 @@ const THEMES = {
 };
 const LABEL_W = 112; // px — width of the month pills (a phone gets NARROW_LABEL_W)
 const NARROW_LABEL_W = 78;
-const STATS_W = 136; // px — the "% achieved / balance" column on the right of each row (wide screens)
-const PLOT_PAD_R = 30; // px — on a phone (no stats column): room so the last axis label stays inside the panel
+const PLOT_PAD_R = 30; // px — room on the right so the last axis label stays inside the panel
 
 const trim = (n) => String(Number(n.toFixed(2)));
 const amountLabel = (rupees) => (rupees >= 1e7 ? `${trim(rupees / 1e7)} Cr` : `${trim(rupees / 1e5)} L`);
@@ -58,9 +58,6 @@ function progressOf(achieved, target) {
   const pct = raw > 0 && raw < 1 ? "<1" : String(Math.round(raw));
   return { pct, raw, left: Math.max(target - achieved, 0), over: Math.max(achieved - target, 0), met: achieved >= target };
 }
-
-// Which ticked types have achieved something this month but no target (only matters with both ticked)
-const typesWithoutTarget = (month, types) => (types.length > 1 ? types.filter((t) => month.byType?.[t] && month.byType[t].target == null) : []);
 
 const tickText = (rupees, narrow) => `₹${trim(rupees / 1e7)}${!narrow && rupees / 1e7 % 1 === 0 ? ".00" : ""} Cr`;
 
@@ -172,9 +169,9 @@ function Tooltip({ month, fy, rect, anchorX, types, theme }) {
           })}
         </div>
       )}
-      {/* <p className="mt-3 border-t border-slate-100 pt-2 text-[11px] leading-snug text-slate-400">
+      <p className="mt-3 border-t border-slate-100 pt-2 text-[11px] leading-snug text-slate-400">
         {both ? "Cash + Kind" : types[0]} conversions only. {hasTarget ? "Double-click to change the target." : "Double-click to set a target."}
-      </p> */}
+      </p>
     </div>,
     document.body
   );
@@ -287,7 +284,7 @@ function Editor({ month, fy, rect, types, saving, error, onSave, onClear, onCanc
 }
 
 export default function MonthCashTargetCard({ fy }) {
-  const [selected, setSelected] = useState(["Cash"]); // the ticked boxes — Cash, Kind or both
+  const [selected, setSelected] = useState(["Cash", "Kind"]); // the ticked boxes — Cash, Kind or both (both when the card opens)
   const types = TYPES.filter((t) => selected.includes(t)); // always in the order Cash, Kind
   const both = types.length > 1;
   const lower = both ? "cash and kind" : types[0].toLowerCase();
@@ -304,8 +301,7 @@ export default function MonthCashTargetCard({ fy }) {
   const [saveError, setSaveError] = useState(null);
   const narrow = useNarrow();
   const labelW = narrow ? NARROW_LABEL_W : LABEL_W;
-  // space to the right of the tracks: the stats column on a wide screen, a little padding on a phone
-  const plotRight = narrow ? PLOT_PAD_R : STATS_W + 12;
+  const plotRight = PLOT_PAD_R; // room to the right of the tracks, so the last axis label fits
 
   const load = useCallback(() => {
     const controller = new AbortController();
@@ -472,16 +468,7 @@ export default function MonthCashTargetCard({ fy }) {
 
         {data && !error && (
           <>
-            {!narrow && (
-              <div className="mb-1 flex items-end gap-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400" aria-hidden="true">
-                <span style={{ width: labelW }} className="shrink-0" />
-                <span className="flex-1" />
-                <span className="shrink-0 whitespace-nowrap text-right" style={{ width: STATS_W }}>
-                  Achieved · Balance
-                </span>
-              </div>
-            )}
-            <div className="relative" style={narrow ? { paddingRight: PLOT_PAD_R } : undefined}>
+            <div className="relative" style={{ paddingRight: PLOT_PAD_R }}>
               {/* dashed gridlines, one per axis step: over the tracks, under the markers and labels */}
               <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 z-[5]" style={{ left: labelW + 12, right: plotRight }}>
                 {axis.ticks.map((t) => (
@@ -495,8 +482,6 @@ export default function MonthCashTargetCard({ fy }) {
                   const targetPct = m.target != null ? Math.min((m.target / axis.max) * 100, 100) : null;
                   const labelInside = barPct >= (narrow ? 38 : 14);
                   const chipLeft = targetPct != null && targetPct <= (narrow ? 50 : 78); // which side of the marker the label sits
-                  const prog = progressOf(m.achieved, m.target);
-                  const unset = prog ? typesWithoutTarget(m, types) : []; // with both ticked: a type that has no target of its own
                   return (
                     <li key={m.name}>
                       <div
@@ -555,33 +540,11 @@ export default function MonthCashTargetCard({ fy }) {
                               </span>
                             </>
                           ) : (
-                            m.achieved === 0 && <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs text-slate-400"></span>
+                            m.achieved === 0 && <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs text-slate-400">Double-click to set a target</span>
                           )}
                         </div>
 
-                        {!narrow && (
-                          <div className="shrink-0 text-right leading-tight" style={{ width: STATS_W }} data-stats={m.name}>
-                            {prog ? (
-                              <>
-                                <p className={`text-base font-bold ${prog.met ? "text-emerald-600" : theme.text}`}>{prog.pct}%</p>
-                                <p className={`text-xs font-semibold ${prog.met ? "text-emerald-600" : "text-slate-500"}`}>
-                                  {prog.met ? `${moneyCr(prog.over)} over` : `${moneyCr(prog.left)} to go`}
-                                </p>
-                                {unset.length > 0 && <p className="text-[10px] font-semibold text-amber-600">{unset.join(" & ")} target not set</p>}
-                              </>
-                            ) : (
-                              <p className="text-xs text-slate-300">no target</p>
-                            )}
-                          </div>
-                        )}
                       </div>
-                      {narrow && prog && (
-                        <p className="mt-1 text-[11px] font-semibold text-slate-500" style={{ paddingLeft: labelW + 12 }} data-stats={m.name}>
-                          <span className={prog.met ? "text-emerald-600" : theme.text}>{prog.pct}%</span> ·{" "}
-                          {prog.met ? `${moneyCr(prog.over)} over` : `${moneyCr(prog.left)} to go`}
-                          {unset.length > 0 && <span className="text-amber-600"> · {unset.join(" & ")} target not set</span>}
-                        </p>
-                      )}
                     </li>
                   );
                 })}
@@ -616,7 +579,7 @@ export default function MonthCashTargetCard({ fy }) {
             </div>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs text-slate-400">
-              {/* <span>Double-click a month to set its target · hover for details · {both ? "cash + kind" : `${lower} only`}, all donors · months follow each deal's Expected Conversion Month, as in the Bigin report</span> */}
+              {/* <span></span> */}
               {(hiddenCount > 0 || showAll) && upcomingExists && (
                 <button type="button" onClick={() => setShowAll((v) => !v)} className="font-semibold text-indigo-600 hover:underline">
                   {showAll ? "Show current & upcoming months" : `Show all months (${hiddenCount} earlier)`}

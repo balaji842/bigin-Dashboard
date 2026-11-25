@@ -104,7 +104,7 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
           </p>
         </div>
 
-        <div className="px-4 py-5 border-t border-white/10 text-xs text-white/40">
+        {/* <div className="px-4 py-5 border-t border-white/10 text-xs text-white/40">
           <button
             onClick={onRefresh}
             disabled={loading}
@@ -114,7 +114,7 @@ export default function Sidebar({ lastUpdated, onRefresh, loading, open, onClose
             {loading ? "Refreshing…" : "Refresh live data"}
           </button>
           {lastUpdated && <p>Last pulled: {lastUpdated}</p>}
-        </div>
+        </div> */}
       </aside>
     </>
   );

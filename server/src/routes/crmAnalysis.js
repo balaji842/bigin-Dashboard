@@ -41,6 +41,18 @@ import { getStageHistories, invalidateStageHistoryCache } from "../lib/stageHist
 import { debugStageHistory } from "../zohoClient.js";
 import { getCategoryTargets, setCategoryTarget } from "../lib/categoryTargetsStore.js";
 import { getMonthTargets, setMonthTarget, TARGET_TYPES } from "../lib/monthCashTargetsStore.js";
+import {
+  LIMITS as MAIL_LIMITS,
+  mailStatus,
+  getSpocEmails,
+  saveSpocEmail,
+  addressProblem,
+  isEmail,
+  buildEmail,
+  sendViaBrevo,
+  dailyAllowance,
+  logMail,
+} from "../lib/mailer.js";
 import { getTargetsFor, getSummedTargetsFor, getAllTargetsForType, setTarget } from "../lib/targetsStore.js";
 
 
@@ -720,6 +732,158 @@ router.put("/crm-analysis/month-cash-target", async (req, res) => {
   try {
     for (const [type, target] of entries) setMonthTarget(String(fy), type, month, Math.round(Number(target)));
     res.json(await monthTargetPayload(String(fy), view));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// ── Mail the SPOCs about donors stuck in a stage ───────────────────────────────────────
+// (the "Send mail" button in the Pipeline popups; settings and limits: see lib/mailer.js)
+// One email per SPOC, containing only that SPOC's donors. The donor rows in the table are
+// NOT taken from the browser: the browser sends deal ids, and the server looks the deals up
+// in its own data, dropping any that don't belong to that SPOC.
+const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+const dealIndexes = new WeakMap();
+function dealIndex(donors) {
+  let index = dealIndexes.get(donors);
+  if (!index) {
+    index = new Map(donors.map((d) => [String(d.id), d]));
+    dealIndexes.set(donors, index);
+  }
+  return index;
+}
+const mailRowOf = (d) => ({
+  account: (d.Account_Name && d.Account_Name.name) || pick(d, "Deal_Name", "(unnamed)"),
+  amount: pickNumber(d, "Amount"),
+  createdTime: d.Created_Time || null,
+  stage: pick(d, "Stage", ""),
+  platform: pick(d, "Platform", ""),
+  spoc: pick(d, "Spoc", ""),
+});
+// the deals of one recipient that really belong to that SPOC, oldest first (the longest-waiting on top)
+function resolveMailRows(donors, recipient) {
+  const index = dealIndex(donors);
+  const rows = [];
+  let dropped = 0;
+  for (const id of recipient.dealIds) {
+    const deal = index.get(String(id));
+    if (!deal || !sameName(pick(deal, "Spoc", ""), recipient.spoc)) {
+      dropped += 1;
+      continue;
+    }
+    rows.push(mailRowOf(deal));
+  }
+  rows.sort((a, b) => (a.createdTime ? Date.parse(a.createdTime) : Infinity) - (b.createdTime ? Date.parse(b.createdTime) : Infinity));
+  return { rows, dropped };
+}
+
+// Checks a request body; returns { error } or the cleaned values.
+function readMailRequest(body, { needEmails }) {
+  const b = body || {};
+  const subject = typeof b.subject === "string" ? b.subject.trim() : "";
+  const bodyHtml = typeof b.body === "string" ? b.body : "";
+  if (!subject) return { error: "Enter a subject." };
+  if (subject.length > MAIL_LIMITS.subject) return { error: `The subject is too long (most ${MAIL_LIMITS.subject} characters).` };
+  if (bodyHtml.length > MAIL_LIMITS.body) return { error: "The message is too long." };
+  if (!bodyHtml.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim()) return { error: "Write a message, or pick a template." };
+  if (!Array.isArray(b.recipients) || b.recipients.length === 0) return { error: "Add at least one recipient." };
+  if (b.recipients.length > MAIL_LIMITS.recipients) return { error: `At most ${MAIL_LIMITS.recipients} SPOCs per send.` };
+  const recipients = [];
+  for (const r of b.recipients) {
+    const spoc = typeof r?.spoc === "string" ? r.spoc.trim() : "";
+    const dealIds = Array.isArray(r?.dealIds) ? r.dealIds.map(String) : [];
+    if (!spoc) return { error: "A recipient has no SPOC name." };
+    if (dealIds.length === 0 || dealIds.length > MAIL_LIMITS.dealsPerRecipient) return { error: `${spoc}: choose between 1 and ${MAIL_LIMITS.dealsPerRecipient} donors.` };
+    const email = typeof r?.email === "string" ? r.email.trim() : "";
+    if (needEmails) {
+      const problem = addressProblem(email);
+      if (problem) return { error: `${spoc}: ${problem}.` };
+    }
+    recipients.push({ spoc, email, dealIds });
+  }
+  const cc = (Array.isArray(b.cc) ? b.cc : []).map((x) => String(x).trim()).filter(Boolean);
+  if (cc.length > MAIL_LIMITS.cc) return { error: `At most ${MAIL_LIMITS.cc} Cc addresses.` };
+  for (const address of cc) {
+    const problem = addressProblem(address);
+    if (problem) return { error: `Cc: ${problem}.` };
+  }
+  return { subject, bodyHtml, recipients, cc, includeTable: b.includeTable !== false };
+}
+
+// GET /api/crm-analysis/mail/setup  → is mail set up, who it is sent as, the saved SPOC addresses
+router.get("/crm-analysis/mail/setup", (_req, res) => {
+  res.json({ ...mailStatus(), emails: getSpocEmails(), limits: MAIL_LIMITS });
+});
+
+// PUT /api/crm-analysis/mail/spoc-email   body: { spoc: "Sanjeev", email: "sanjeev@…" }  (empty email forgets it)
+router.put("/crm-analysis/mail/spoc-email", (req, res) => {
+  try {
+    res.json({ emails: saveSpocEmail(req.body?.spoc, req.body?.email) });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// POST /api/crm-analysis/mail/preview   body: { subject, body, includeTable, recipients: [{ spoc, dealIds }] }
+// What the first SPOC's email would look like — built exactly as it will be sent, but not sent.
+router.post("/crm-analysis/mail/preview", async (req, res) => {
+  const read = readMailRequest({ ...req.body, recipients: (req.body?.recipients || []).slice(0, 1) }, { needEmails: false });
+  if (read.error) return res.status(400).json({ error: read.error });
+  try {
+    const donors = await getPipelines();
+    const { rows } = resolveMailRows(donors, read.recipients[0]);
+    if (rows.length === 0) return res.status(400).json({ error: `None of the selected donors belong to ${read.recipients[0].spoc} any more.` });
+    const mail = buildEmail({ subject: read.subject, bodyHtml: read.bodyHtml, includeTable: read.includeTable, spoc: read.recipients[0].spoc, rows, fromName: mailStatus().fromName });
+    res.json({ subject: mail.subject, html: mail.html, donors: rows.length });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// POST /api/crm-analysis/mail/send   body: { subject, body, includeTable, cc: [], recipients: [{ spoc, email, dealIds }] }
+// Answers { sent, failed, results: [{ spoc, email, ok, error?, messageId?, donors }] } — a SPOC that
+// fails doesn't stop the others.
+router.post("/crm-analysis/mail/send", async (req, res) => {
+  const status = mailStatus();
+  if (!status.configured) return res.status(503).json({ setup: true, error: `Mail isn't set up yet: add ${status.missing.join(" and ")} to server/.env and restart the server.` });
+  const read = readMailRequest(req.body, { needEmails: true });
+  if (read.error) return res.status(400).json({ error: read.error });
+  const allowance = dailyAllowance(read.recipients.length);
+  if (!allowance.ok) return res.status(429).json({ error: `That would pass today's limit of ${allowance.limit} emails (${allowance.used} already sent). Try again tomorrow, or raise MAIL_DAILY_LIMIT.` });
+
+  try {
+    const donors = await getPipelines();
+    const results = [];
+    let stop = null; // a problem that would hit every remaining SPOC too (bad key, mail not set up)
+    for (const r of read.recipients) {
+      if (stop) {
+        results.push({ spoc: r.spoc, email: r.email, ok: false, error: stop });
+        continue;
+      }
+      const { rows, dropped } = resolveMailRows(donors, r);
+      if (rows.length === 0) {
+        results.push({ spoc: r.spoc, email: r.email, ok: false, error: `None of the selected donors belong to ${r.spoc} any more.` });
+        continue;
+      }
+      const mail = buildEmail({ subject: read.subject, bodyHtml: read.bodyHtml, includeTable: read.includeTable, spoc: r.spoc, rows, fromName: status.fromName });
+      try {
+        const sent = await sendViaBrevo({ to: r.email, toName: r.spoc, cc: read.cc, subject: mail.subject, html: mail.html, text: mail.text });
+        results.push({ spoc: r.spoc, email: r.email, ok: true, messageId: sent.messageId, donors: rows.length, dropped });
+        logMail({ ok: true, spoc: r.spoc, to: r.email, cc: read.cc, subject: mail.subject, donors: rows.length, messageId: sent.messageId });
+        try {
+          saveSpocEmail(r.spoc, r.email); // remember it for next time
+        } catch {
+          // not worth failing a sent mail
+        }
+      } catch (err) {
+        results.push({ spoc: r.spoc, email: r.email, ok: false, error: err.message });
+        logMail({ ok: false, spoc: r.spoc, to: r.email, subject: mail.subject, donors: rows.length, error: err.message });
+        if (err.status === 401 || err.status === 503) stop = err.message;
+      }
+      await new Promise((done) => setTimeout(done, 120));
+    }
+    const sent = results.filter((x) => x.ok).length;
+    res.json({ sent, failed: results.length - sent, results });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
